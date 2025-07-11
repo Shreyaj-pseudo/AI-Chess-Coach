@@ -39,6 +39,8 @@ htmlcov/
 
 # Ignore nonopenai package if needed
 nonopenai/
+stockfish/
+stockfish-windows-x86-64-avx2.zip
 
 # __init__.py cache
 *.pyo
