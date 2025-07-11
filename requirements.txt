@@ -1,0 +1,4 @@
+python-chess
+requests
+python-dotenv
+notopenai
