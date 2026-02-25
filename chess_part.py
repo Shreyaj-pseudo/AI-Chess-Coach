@@ -17,8 +17,15 @@ class ChessAnalyzer:
         self.score_played = None
         self.all_open_moves = []
         self.opening_data = {}
+        self.turn = None
+        self.white_pieces = []
+        self.black_pieces = []
 
 
+    def whose_move(self, fen):
+        board = chess.Board(fen)
+        return "White" if board.turn == chess.WHITE else "Black"
+    
     def get_best_move_and_score(self, fen):
         board = chess.Board(fen)
         with chess.engine.SimpleEngine.popen_uci(self.stockfish_path) as engine:
@@ -76,7 +83,7 @@ class ChessAnalyzer:
     def get_stockfish_pv(self, fen):
         board = chess.Board(fen)
         with chess.engine.SimpleEngine.popen_uci(self.stockfish_path) as engine:
-            info = engine.analyse(board, chess.engine.Limit(depth=15), multipv=1)[0]
+            info = engine.analyse(board, chess.engine.Limit(depth=20), multipv=1)[0]
             score = info["score"]
             
             if score.is_mate():
@@ -136,12 +143,24 @@ class ChessAnalyzer:
             "opening_name": "Unknown",
             "opening_moves": []
         }
+    
+    def get_piece_position(self, fen):
+        board = chess.Board(fen)
+
+        for square, piece in board.piece_map().items():
+            if piece.color:  # White
+                self.white_pieces.append(f"{piece.symbol().upper()}@{chess.square_name(square)}")
+            else:  # Black
+                self.black_pieces.append(f"{piece.symbol()}@{chess.square_name(square)}")
 
 
 
     def load_position(self, fen: str, played_move: str, pgn_string: str = None):
         self.fen = fen
         self.played = played_move
+
+        # get whose move it is
+        self.turn = self.whose_move(fen)
 
         # Get best move and score
         self.get_best_move_and_score(fen)
@@ -154,6 +173,9 @@ class ChessAnalyzer:
 
         # Get principal variation
         self.get_stockfish_pv(fen)
+
+        #get piece position
+        self.get_piece_position(fen)
 
         # Get opening moves from PGN (optional)
         if pgn_string:
