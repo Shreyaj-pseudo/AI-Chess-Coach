@@ -75,7 +75,7 @@ class EnvironmentTests(unittest.TestCase):
         from contextlib import redirect_stdout
 
         with patch.object(check_setup, "resolve_stockfish_path", return_value="configured-engine"):
-            with patch("chess.engine.SimpleEngine.popen_uci") as launch, redirect_stdout(io.StringIO()):
+            with patch("chess.engine.UciProtocol.popen") as launch, redirect_stdout(io.StringIO()):
                 self.assertEqual(check_setup.main([]), 0)
                 launch.assert_not_called()
 
@@ -84,10 +84,10 @@ class EnvironmentTests(unittest.TestCase):
 
         output = io.StringIO()
         with patch.object(check_setup, "resolve_stockfish_path", return_value="configured-engine"):
-            with patch("chess.engine.SimpleEngine.popen_uci", side_effect=chess.engine.EngineTerminatedError("not a UCI engine")):
+            with patch("engine_session.resolve_stockfish_path", return_value="configured-engine"), patch("chess.engine.UciProtocol.popen", side_effect=chess.engine.EngineTerminatedError("not a UCI engine")):
                 with redirect_stderr(output), redirect_stdout(output):
                     self.assertEqual(check_setup.main(["--engine"]), 1)
-        self.assertIn("Stockfish UCI check failed", output.getvalue())
+        self.assertIn("Stockfish startup failed", output.getvalue())
         self.assertNotIn("Traceback", output.getvalue())
 
 

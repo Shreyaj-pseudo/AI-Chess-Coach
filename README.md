@@ -1,6 +1,6 @@
 # Chess AI Coach
 
-A local-first chess coaching project. T01 establishes a reproducible Miniconda environment and portable Stockfish configuration. The existing analysis scripts are prototypes: a working web coach and model inference come in later tasks.
+A local-first chess coaching project. T01-T04 provide a reproducible Miniconda environment, strict PGN replay, validated analysis records and a persistent Stockfish session. The existing analysis scripts are prototypes: a working web coach and model inference come in later tasks.
 
 Roadmap: [audited plan](docs/PLAN.md), [daily agent workflow](docs/DAILY_WORKFLOW.md), [detailed task backlog](docs/tasks.json).
 
@@ -77,6 +77,35 @@ Call `card.validate_for(analysis)` before using a standalone card; `TrainingExam
 
 T03 adds the shared data contract and conversion helpers. The legacy phase scripts still print their old raw-score prompts; migrating engine ownership/results and the complete explanation pipeline is T04-T12. Opening/tablebase evidence, board-feature extraction, full semantic claim checks and training/export workflows are not implemented by these schemas.
 
+## Persistent Stockfish session (T04)
+
+`engine_session.py` owns one lazily started process for sequential searches. Use one session per worker, on one asyncio event loop, and close it with an async context manager:
+
+```python
+import asyncio
+import chess
+from engine_session import StockfishSession
+
+async def main():
+    async with StockfishSession() as session:
+        board = chess.Board()
+        first = await session.analyse(board, time_limit=0.15)
+        board.push_uci("e2e4")
+        second = await session.analyse(board, time_limit=1.5)
+        print(session.engine_name, session.pid, board.variation_san(second["pv"]))
+    print("Engine exited:", session.returncode)
+
+asyncio.run(main())
+```
+
+The session uses the shared executable discovery below and fixes Stockfish to **one engine thread and 128 MB hash**. Searches default to 1.5 seconds and accept a finite positive time budget up to 5 seconds. Each search has an additional 1-second response allowance; startup/initialization has a separate 5-second deadline. These limits bound individual operations, not queue wait or an entire game review. Search results remain python-chess `InfoDict` values; T05 will build the candidate/played-move records from them. The input board is copied with its full move stack, retaining repetition history.
+
+Concurrent calls wait on a lock. Missing/incompatible executables raise `EngineUnavailableError`; startup/search deadlines raise `EngineTimeoutError`; engine exits and closed sessions raise `EngineSessionError`. Failure or timeout terminates and reaps the process before reporting the error; a later search may start a fresh one. There is no automatic retry of the failed search. Cancel an active search's asyncio task **and await it** to abort its engine and propagate `CancelledError`; cancelling a queued task leaves the active engine alone. Protocol futures stay alive during termination to avoid a cancellation bug in the installed python-chess version.
+
+Context exit or `await session.aclose()` permanently closes the session, drains the bounded active search, rejects queued searches, and requests graceful quit. An unresponsive quit is terminated after 2 seconds, followed by up to 2 seconds to confirm exit. Cleanup is joined even if the caller cancels shutdown. An unconfirmed exit remains a visible error and prevents spawning a replacement over the unreaped process. Always await shutdown before stopping the event loop. The session is for standard chess, not variants/Chess960.
+
+The setup smoke below now exercises this session with two positions, validates both PVs, checks process reuse, and confirms the child exit code. Offline lifecycle tests use fakes and a real python-chess analysis future; they do not launch Stockfish. The old synchronous `ChessAnalyzer` and phase prompt scripts still follow their prototype path; the new session is the foundation for T05-T12 and does not yet change their coaching output.
+
 ## Set up with Miniconda on Windows
 
 Run from the repository root in a Miniconda PowerShell prompt:
@@ -121,7 +150,7 @@ stockfish/stockfish-windows-x86-64-avx2.exe
 
 Stockfish discovery follows this order:
 
-1. Explicit `ChessAnalyzer(stockfish_path=...)` argument.
+1. Explicit `StockfishSession(stockfish_path=...)` or legacy `ChessAnalyzer(stockfish_path=...)` argument.
 2. `STOCKFISH_PATH` from your shell or the repository `.env` (shell values win).
 3. A `stockfish` executable on PATH.
 4. The existing local Windows AVX2 executable, or `stockfish/stockfish` on other systems.
@@ -142,7 +171,7 @@ Start the actual engine and check that it returns a legal move:
 python -m scripts.check_setup --engine
 ```
 
-This performs a short UCI search and closes the engine. It makes no hosted-model or Lichess request. If the executable fails to start, check its path, CPU instruction requirements, operating-system compatibility and permissions. A passing smoke check is not validation of the full analysis pipeline.
+This performs two short UCI searches in one process and confirms its shutdown. It makes no hosted-model or Lichess request. If the executable fails to start, check its path, CPU instruction requirements, operating-system compatibility and permissions. A passing smoke check is not validation of the full analysis pipeline.
 
 Stockfish is GPLv3; preserve the corresponding source/license information if distributing its binary. [Official license guidance](https://stockfishchess.org/about/)
 
@@ -152,6 +181,7 @@ Stockfish is GPLv3; preserve the corresponding source/license information if dis
 python -m unittest discover -s tests -p test_T01_environment.py -v
 python -m unittest discover -s tests -p test_T02_pgn.py -v
 python -m unittest discover -s tests -p test_T03_records.py -v
+python -m unittest discover -s tests -p test_T04_engine.py -v
 python -m unittest discover -s tests -v
 python scripts/workflow.py status --track mvp
 python scripts/workflow.py prompt --track mvp
@@ -164,11 +194,11 @@ Task evidence and logs are in gitignored `artifacts/tasks/` and `.workflow/`. Ke
 ## Known prototype limitations
 
 - Phase functions print prompts and return no generated coaching explanation; no model is called.
-- The coordinator repeats analysis, and each load starts multiple engine processes; persistent ownership is T04.
+- The legacy coordinator repeats analysis, and each legacy load starts multiple engine processes. T04's new session reuses its process; the coordinator migration is T12.
 - Best-move, played-move and principal-variation searches have different budgets. Scores are not normalized before comparison.
 - Opening identification uses the first ten plies and SAN membership instead of the exact reviewed position; HTTP calls lack timeouts.
 - Phase detection uses piece count, and piece lists accumulate on analyzer reuse.
 - The collector loads all games before sampling and prints UCI, while the analyzer expects SAN.
 - No website, reliable whole-game coach, approved training corpus, trained model or deployment exists yet. Existing six draft labels remain untrusted.
 
-These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization. Engine ownership, evidence collection, coaching and the website remain later tasks.
+These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership. Candidate comparison, evidence collection, coaching and the website remain later tasks.
