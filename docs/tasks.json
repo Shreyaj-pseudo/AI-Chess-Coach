@@ -1,0 +1,1243 @@
+{
+  "version": 1,
+  "description": "Ordered work sessions and dependency gates for the audited chess-coach plan. Estimates are focused hours, not guaranteed calendar days.",
+  "tasks": [
+    {
+      "id": "T01",
+      "title": "Reproducible local environment and baseline tests",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-3",
+      "depends_on": [],
+      "steps": [
+        "Create an isolated Python environment and pin tested runtime dependencies; keep training packages separate.",
+        "Document Windows setup, Stockfish installation/discovery and example environment-variable names without reading or copying real keys.",
+        "Create README setup commands; preserve existing scripts/data and record known prototype failures."
+      ],
+      "acceptance": [
+        "A fresh environment imports the required libraries and runs the existing workflow tests.",
+        "Tests reject a missing/invalid engine configuration with an actionable error rather than a hard-coded user path.",
+        "Evidence lists the actual interpreter, dependency versions, setup commands and their results."
+      ],
+      "evidence": "artifacts/tasks/T01.md",
+      "test_file": "test_T01_environment.py"
+    },
+    {
+      "id": "T02",
+      "title": "Strict PGN parsing and legal position replay",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T01"
+      ],
+      "steps": [
+        "Add a shared PGN parser with one-game, UTF-8, 256-KB and 200-ply limits; treat parser errors as errors.",
+        "Support legal standard-chess setup FENs and preserve move history; reject unsupported variants and illegal mainlines.",
+        "Add small original PGN fixtures for White/Black review, comments, castling, en passant, promotion, terminal and repetition cases."
+      ],
+      "acceptance": [
+        "Every emitted FEN and SAN/UCI pair agrees with legal replay; learner decisions are pre-move positions.",
+        "Malformed, multiple-game, invalid-position and oversize submissions fail clearly.",
+        "Comments and future moves never become instructions or current-position context."
+      ],
+      "evidence": "artifacts/tasks/T02.md",
+      "test_file": "test_T02_pgn.py"
+    },
+    {
+      "id": "T03",
+      "title": "Versioned analysis records and score orientation",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-4",
+      "depends_on": [
+        "T02"
+      ],
+      "steps": [
+        "Implement AnalysisRecord, Candidate, CoachingCard and TrainingExample schemas with stable IDs/versioning.",
+        "Represent centipawn, mate and unavailable scores explicitly; normalize to the learner before any subtraction.",
+        "Keep search provenance, position/history references and played-move evidence distinct."
+      ],
+      "acceptance": [
+        "White/Black score tests catch sign reversal after a move.",
+        "Mate scores cannot be silently converted to centipawn teaching losses.",
+        "Invalid candidate roots, missing provenance and malformed records are rejected."
+      ],
+      "evidence": "artifacts/tasks/T03.md",
+      "test_file": "test_T03_records.py"
+    },
+    {
+      "id": "T04",
+      "title": "Persistent Stockfish ownership and lifecycle",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-4",
+      "depends_on": [
+        "T03"
+      ],
+      "steps": [
+        "Create one engine-owning worker/session using environment/PATH configuration, one thread and bounded hash/search time.",
+        "Reuse the process for sequential positions; close it on shutdown, timeout, failure and cancellation.",
+        "Use deterministic fake-engine tests plus a separately recorded real-binary smoke run."
+      ],
+      "acceptance": [
+        "Two positions reuse one process; shutdown and crash recovery do not leak a child.",
+        "Missing binary and timed-out search produce typed actionable failures.",
+        "Evidence records the real engine version and a legal smoke-test line; mocks are not reported as that smoke run."
+      ],
+      "evidence": "artifacts/tasks/T04.md",
+      "test_file": "test_T04_engine.py"
+    },
+    {
+      "id": "T05",
+      "title": "MultiPV candidates and the actual played-move reply",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T04"
+      ],
+      "steps": [
+        "Return up to three legal candidate lines, with score/PV drawn from the same search result.",
+        "If the played move is absent, add a restricted-root search and retain the opponent's strongest reply.",
+        "Record time/depth/nodes and flag inconsistent or unstable comparisons; preserve full PVs internally."
+      ],
+      "acceptance": [
+        "A deliberately bad move outside MultiPV still has its own line and evaluation.",
+        "Illegal/mismatched PV roots fail validation, including mate and terminal positions.",
+        "Near-equal or unstable candidates do not become categorical mistakes."
+      ],
+      "evidence": "artifacts/tasks/T05.md",
+      "test_file": "test_T05_candidates.py"
+    },
+    {
+      "id": "T06",
+      "title": "Deterministic board facts and evidence references",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T05"
+      ],
+      "steps": [
+        "Compute material, legal checks/captures, attacks, pins, open files and simple pawn-structure facts.",
+        "Compute changes along candidate lines and reference exact line/ply for concrete claims.",
+        "Keep attack counts separate from verified hanging-piece or winning-tactic claims."
+      ],
+      "acceptance": [
+        "Original fixed-board fixtures cover a pinned defender, defended attacked piece, opening file and passed pawn.",
+        "A board fact is evaluated at its referenced position, not the unrelated root.",
+        "Unsupported tactical conclusions remain unknown instead of being asserted."
+      ],
+      "evidence": "artifacts/tasks/T06.md",
+      "test_file": "test_T06_facts.py"
+    },
+    {
+      "id": "T07",
+      "title": "Opening explorer with honest statistics and caching",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T06"
+      ],
+      "steps": [
+        "Implement exact-position Masters and rating-filtered Lichess lookups using documented endpoints.",
+        "Serialize calls, cache responses, set timeouts, handle rate limits and disclose sample size/source/filters.",
+        "Keep common moves and named openings separate from proven superiority; respect the initial move-window/sparse-sample defaults."
+      ],
+      "acceptance": [
+        "Transpositions match by position; SAN membership elsewhere cannot classify a book move.",
+        "Mocked timeout, sparse data, invalid JSON and HTTP 429 produce bounded failures/fallbacks.",
+        "The reviewed opening context contains no later game moves; popularity alone never creates a best-move claim."
+      ],
+      "evidence": "artifacts/tasks/T07.md",
+      "test_file": "test_T07_openings.py"
+    },
+    {
+      "id": "T08",
+      "title": "Tablebase eligibility and draw-rule context",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-4",
+      "depends_on": [
+        "T07"
+      ],
+      "steps": [
+        "Add a small tablebase adapter with supported-piece-count/castling eligibility and visible engine fallback.",
+        "Preserve fifty-move/repetition context, rule-dependent outcomes and score perspective.",
+        "Keep distance-to-zeroing separate from mate distance."
+      ],
+      "acceptance": [
+        "Unsupported positions do not make tablebase calls.",
+        "Rule-dependent wins/draws and unavailable responses are represented without a false forced-mate claim.",
+        "Mocks cover timeout and malformed responses; terminal positions avoid pointless searches."
+      ],
+      "evidence": "artifacts/tasks/T08.md",
+      "test_file": "test_T08_tablebases.py"
+    },
+    {
+      "id": "T09",
+      "title": "Whole-game scan and instructive-moment selection",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T08"
+      ],
+      "steps": [
+        "Scan only learner decisions with bounded preliminary searches; deep-confirm selected moments.",
+        "Prioritize meaningful losses, forcing choices, strong decisions and opening moments; deduplicate adjacent repeated lessons.",
+        "Return at most fifteen, show the top three first, and allow zero/fewer moments without padding."
+      ],
+      "acceptance": [
+        "Synthetic score traces deterministically select known turning points and reject noisy near-equalities.",
+        "Short and quiet games do not fabricate ten cards; both colors work.",
+        "Selected explanations use deep evidence and the actual played line, not shallow scores alone."
+      ],
+      "evidence": "artifacts/tasks/T09.md",
+      "test_file": "test_T09_selection.py"
+    },
+    {
+      "id": "T10",
+      "title": "Replaceable model client with OpenRouter free-only option",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T03"
+      ],
+      "steps": [
+        "Implement generate_card behind a small hosted/Ollama interface; use HTTP facilities already installed.",
+        "Support a configurable explicit OpenRouter free model and recorded provider; fetch/catalog-check zero pricing before calls.",
+        "Disable automatic paid fallback; separate unavailable/429/invalid-response errors; keep keys server-side and out of logs."
+      ],
+      "acceptance": [
+        "Mocked paid/unknown pricing, missing keys and unavailable free endpoints fail closed.",
+        "Tests assert the exact requested model/provider and safe structured request contents.",
+        "No live request is required for offline tests; live smoke evidence is separately labeled and only run with configured credentials."
+      ],
+      "evidence": "artifacts/tasks/T10.md",
+      "test_file": "test_T10_models.py"
+    },
+    {
+      "id": "T11",
+      "title": "Grounded card prompts and response validation",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T06",
+        "T10"
+      ],
+      "steps": [
+        "Serialize compact evidence and prefix-only game context; include candidate and played-move continuations.",
+        "Request detailed structured cards with short summary, comparisons, replayable references, lesson and uncertainty.",
+        "Validate schema, referenced moves/facts and token budgets; allow one repair, then suppress invalid output."
+      ],
+      "acceptance": [
+        "A legal line paired with a false concrete board claim is rejected by supported-fact checks.",
+        "Prompt-injection comments, invented intent, wrong-side scores and unknown line references are caught in fixtures.",
+        "Uncheckable strategic interpretation is qualified; the validator does not claim complete semantic proof."
+      ],
+      "evidence": "artifacts/tasks/T11.md",
+      "test_file": "test_T11_cards.py"
+    },
+    {
+      "id": "T12",
+      "title": "One-card end-to-end integration and ten-position suite",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-4",
+      "depends_on": [
+        "T11",
+        "T05"
+      ],
+      "steps": [
+        "Wire parser -> engine -> evidence -> model -> validator -> card through one shared pipeline.",
+        "Use ten original curated positions spanning tactics, quiet play, alternatives, openings and endgames.",
+        "Migrate the prototype entrypoint after callers/tests work; remove duplicated phase analysis without dropping error handling."
+      ],
+      "acceptance": [
+        "Offline integration uses deterministic model/engine fixtures and produces replayable cards.",
+        "Optional live smoke results clearly name the real engine/model; simulated output is never presented as generated evidence.",
+        "A bad model response is suppressed while preserving an actionable error."
+      ],
+      "evidence": "artifacts/tasks/T12.md",
+      "test_file": "test_T12_one_card.py"
+    },
+    {
+      "id": "T13",
+      "title": "SQLite review jobs, bounded queue and cancellation",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T09",
+        "T12"
+      ],
+      "steps": [
+        "Add persistent job status, one bounded in-process queue and a single engine worker.",
+        "Add capability tokens, cancellation, timeouts and failed-on-restart recovery.",
+        "Keep runtime reports separate from source and annotation projects; clean up resources on every exit."
+      ],
+      "acceptance": [
+        "Queue overflow, wrong token, cancellation and engine/model failure have explicit states.",
+        "Restart never leaves an in-progress job polling forever.",
+        "Concurrent submissions cannot overlap searches in one engine or corrupt stored status."
+      ],
+      "evidence": "artifacts/tasks/T13.md",
+      "test_file": "test_T13_jobs.py"
+    },
+    {
+      "id": "T14",
+      "title": "Local FastAPI upload and progress interface",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T13"
+      ],
+      "steps": [
+        "Build server-rendered upload/paste form with learner-color selection and browser-local PGN recovery.",
+        "Add POST /reviews and token-protected status/progress endpoints with clear validation messages.",
+        "Keep headers/comments out of model instructions and render all user strings safely."
+      ],
+      "acceptance": [
+        "HTTP tests cover valid upload, paste, missing color, malformed/oversize PGN and unauthorized review access.",
+        "Progress and reset/retry behavior survive a failed job without exposing another report.",
+        "Document a real browser smoke check; no external hosting yet."
+      ],
+      "evidence": "artifacts/tasks/T14.md",
+      "test_file": "test_T14_upload.py"
+    },
+    {
+      "id": "T15",
+      "title": "Interactive report board and detailed coaching cards",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T14"
+      ],
+      "steps": [
+        "Bundle a pinned board component and documented piece assets; display orientation, move list and replayable supplied variations.",
+        "Show the first three moments and expandable remaining cards; preserve detailed explanations.",
+        "Add keyboard navigation, visible notation, responsive layout and empty/error states."
+      ],
+      "acceptance": [
+        "Tests check generated board states, orientation, line/ply mapping and HTML escaping.",
+        "Browser evidence covers keyboard navigation, mobile-width layout and both colors.",
+        "Board reset returns to the reviewed position; arbitrary unevaluated variation chat is not implied."
+      ],
+      "evidence": "artifacts/tasks/T15.md",
+      "test_file": "test_T15_report.py"
+    },
+    {
+      "id": "T16",
+      "title": "Feedback, retention and provider disclosures",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-4",
+      "depends_on": [
+        "T15"
+      ],
+      "steps": [
+        "Add helpful/not-helpful, issue category and optional comment per card.",
+        "Add explicit contribution opt-in, header stripping before remote calls, 24-hour ordinary-report expiry and reset.",
+        "Keep annotation projects until deliberate removal; block public reviewer routes and avoid secrets/raw PGNs in logs."
+      ],
+      "acceptance": [
+        "Opting out does not create training examples; opting in creates untrusted feedback awaiting review.",
+        "Expired/wrong-token reviews cannot be read or edited; identity headers do not reach the mocked provider.",
+        "Deletion/expiry preserves deliberate annotation projects and has tests preventing cross-project deletion."
+      ],
+      "evidence": "artifacts/tasks/T16.md",
+      "test_file": "test_T16_feedback.py"
+    },
+    {
+      "id": "T17",
+      "title": "Local acceptance, failure recovery and performance report",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "3-5",
+      "depends_on": [
+        "T16"
+      ],
+      "steps": [
+        "Run the complete offline suite and a separate real-provider/engine acceptance run when credentials exist.",
+        "Measure twenty representative games; record p50/p95, engine/model versions, cache state, per-stage latency and failures.",
+        "Document fresh-install and browser acceptance outcomes; fix acceptance-blocking failures before completion."
+      ],
+      "acceptance": [
+        "Evidence includes actual twenty-game results, not an estimate or mocked latency.",
+        "Interrupted jobs, unavailable provider and engine crashes recover without lost resources or endless polling.",
+        "If credentials/hardware prevent the real run, block this task with reproducible details rather than mark complete."
+      ],
+      "evidence": "artifacts/tasks/T17.md",
+      "test_file": "test_T17_acceptance.py"
+    },
+    {
+      "id": "T18",
+      "title": "Human first-demo and learning review",
+      "track": "mvp",
+      "owner": "human",
+      "hours": "2-3",
+      "depends_on": [
+        "T17"
+      ],
+      "steps": [
+        "Have the user review the real demo for correctness, clarity, navigation and useful detail.",
+        "Ask at least three target players to review a game and explain one lesson in their own words; user handles invitations.",
+        "Record serious errors and fix them through a focused follow-up before approving this gate."
+      ],
+      "acceptance": [
+        "Evidence contains real reviewer observations and game/card references, without invented participants.",
+        "At least one simple transfer exercise is attempted; report limitations rather than claiming rating improvement.",
+        "Human approval explicitly says whether the local demo is ready for portfolio preparation."
+      ],
+      "evidence": "artifacts/tasks/T18.md"
+    },
+    {
+      "id": "T19",
+      "title": "Local annotation interface and immutable revisions",
+      "track": "dataset",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T16"
+      ],
+      "steps": [
+        "Reuse the board/report UI to inspect evidence, edit coaching fields and approve/reject revisions.",
+        "Store drafts, reviewer identity, revision history and approved outputs separately from immutable analysis.",
+        "Keep the interface local-only and export only approved current revisions."
+      ],
+      "acceptance": [
+        "Editing a card never overwrites its analysis or original draft.",
+        "Rejected, empty and unapproved records cannot enter an export.",
+        "Tests cover revision history, stale edits and local-only reviewer routes."
+      ],
+      "evidence": "artifacts/tasks/T19.md",
+      "test_file": "test_T19_annotation.py"
+    },
+    {
+      "id": "T20",
+      "title": "Streaming corpus sampler, provenance and locked splits",
+      "track": "dataset",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T19"
+      ],
+      "steps": [
+        "Replace all-games-in-memory sampling with streaming PGN ingestion and reproducible sampling.",
+        "Record source/license/game hash, canonical position and theme; partition before generating labels.",
+        "Keep games and transposed duplicate positions together or omit collisions; preserve an untouched test set and pilot separation.",
+        "Implement python -m coach.dataset audit-batch --batch L01 --expected-count 25 --partition train (and other batch IDs/partitions). Return nonzero for missing/incorrect counts, unapproved or empty labels, wrong themes/partitions, reused IDs, missing provenance or unresolved critical claims; emit the audited ID list and manifest hash."
+      ],
+      "acceptance": [
+        "Fixtures containing duplicate games/transpositions cannot leak positions across splits.",
+        "Streaming output is deterministic with a seed and handles empty/bad source games without losing progress.",
+        "Existing six prototype labels remain unchanged and excluded; train/validation/test manifests are independently auditable."
+      ],
+      "evidence": "artifacts/tasks/T20.md",
+      "test_file": "test_T20_corpus.py"
+    },
+    {
+      "id": "T21",
+      "title": "Human review of draft-source and provider permissions",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "1-2",
+      "depends_on": [
+        "T10",
+        "T20"
+      ],
+      "steps": [
+        "Choose an explicit model/provider for drafts and document current terms for inputs, outputs, synthetic training and distribution.",
+        "Distinguish provider use of your prompts from permission for you to train on its outputs; free price alone proves neither.",
+        "If permission is unclear, approve original human-authored labels or an explicitly permitted local source instead."
+      ],
+      "acceptance": [
+        "Evidence names the exact provider/model, checked URLs/date, allowed purpose and constraints.",
+        "Approval states which source is allowed for training drafts and which may only be used as a runtime/evaluation baseline.",
+        "An agent cannot self-approve unclear rights or assume OpenRouter bypasses underlying restrictions."
+      ],
+      "evidence": "artifacts/tasks/T21.md"
+    },
+    {
+      "id": "T22",
+      "title": "Resumable draft generation with free-tier budgets",
+      "track": "dataset",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T20",
+        "T21",
+        "T11"
+      ],
+      "steps": [
+        "Generate candidate cards from approved analysis using the allowed source; preserve raw drafts and request metadata.",
+        "Default to at most twenty attempts per session, forty per rolling 24 hours and at least four seconds between calls; count failures/repairs.",
+        "Checkpoint each attempt, resume without duplicates, stop on quota exhaustion and never switch silently to paid or unrelated models."
+      ],
+      "acceptance": [
+        "Mocked interruptions, duplicate retries, HTTP 429/402 and exhausted budgets preserve progress and never leak keys.",
+        "Records store model/provider, prompt/schema/config hashes, source partition and validation status.",
+        "No generated draft automatically becomes a gold reference; human-authored input is supported when API reuse is disallowed."
+      ],
+      "evidence": "artifacts/tasks/T22.md",
+      "test_file": "test_T22_generation.py"
+    },
+    {
+      "id": "T23",
+      "title": "Human thirty-example pilot and independent chess check",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "6-10",
+      "depends_on": [
+        "T22"
+      ],
+      "steps": [
+        "Review thirty pilot explanations outside the final 500, spanning all four themes and both strong/error examples.",
+        "Have a stronger chess reviewer inspect at least ten difficult examples; user arranges this and records disagreements.",
+        "Freeze a practical rubric and revise the evidence/card schema before scaling; measure actual review time."
+      ],
+      "acceptance": [
+        "Every accepted pilot answer has real edits/approval and source evidence.",
+        "Unsupported claims, ambiguous wording and equivalent moves have recorded resolutions.",
+        "Evidence records time per accepted answer and whether scaling is justified; no synthetic reviewer signatures."
+      ],
+      "evidence": "artifacts/tasks/T23.md"
+    },
+    {
+      "id": "T24",
+      "title": "Explanation evaluation harness and blind rating exports",
+      "track": "dataset",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T23"
+      ],
+      "steps": [
+        "Build automatic legality/fact/schema checks plus separate 1-5 human rubrics for correctness, support, clarity and usefulness.",
+        "Blind/randomize model outputs, hide reference answers from generation, and aggregate ratings/error counts with uncertainty notes.",
+        "Use validation for selection and reserve test for the final locked configuration; do not use one model as the sole judge."
+      ],
+      "acceptance": [
+        "Known illegal, wrong-side, invented-material and false-fact examples are flagged.",
+        "Test answers cannot appear in generation prompts or optimization inputs.",
+        "Score summaries preserve denominators, reviewer disagreement and missing ratings rather than reporting false accuracy."
+      ],
+      "evidence": "artifacts/tasks/T24.md",
+      "test_file": "test_T24_evaluation.py"
+    },
+    {
+      "id": "T25",
+      "title": "Portfolio package and reproducible local release",
+      "track": "mvp",
+      "owner": "agent",
+      "hours": "2-4",
+      "depends_on": [
+        "T18",
+        "T24"
+      ],
+      "steps": [
+        "Write clean installation/use documentation, a short demo recording/script, architecture glossary and measured limitations.",
+        "Include reproducible acceptance results and a small rights-cleared sample; prepare resume wording with actual measured facts.",
+        "Verify a fresh install and document current license/provenance decisions; do not publish externally in this task."
+      ],
+      "acceptance": [
+        "A new reader can run a sample review from documented commands.",
+        "All performance/quality/adoption claims link to actual evidence; missing measures are explicitly absent.",
+        "Smoke tests verify the documented local entrypoint and sample data."
+      ],
+      "evidence": "artifacts/tasks/T25.md",
+      "test_file": "test_T25_portfolio.py"
+    },
+    {
+      "id": "L01",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 1/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "T23",
+        "T24"
+      ],
+      "steps": [
+        "Review 25 new approved examples: opening decisions; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L01-review.md"
+    },
+    {
+      "id": "L02",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 2/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L01"
+      ],
+      "steps": [
+        "Review 25 new approved examples: opening decisions; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L02-review.md"
+    },
+    {
+      "id": "L03",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 3/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L02"
+      ],
+      "steps": [
+        "Review 25 new approved examples: opening decisions; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L03-review.md"
+    },
+    {
+      "id": "L04",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 4/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L03"
+      ],
+      "steps": [
+        "Review 25 new approved examples: opening decisions; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L04-review.md"
+    },
+    {
+      "id": "L05",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 5/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L04"
+      ],
+      "steps": [
+        "Review 25 new approved examples: tactics; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L05-review.md"
+    },
+    {
+      "id": "L06",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 6/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L05"
+      ],
+      "steps": [
+        "Review 25 new approved examples: tactics; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L06-review.md"
+    },
+    {
+      "id": "L07",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 7/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L06"
+      ],
+      "steps": [
+        "Review 25 new approved examples: tactics; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L07-review.md"
+    },
+    {
+      "id": "L08",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 8/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L07"
+      ],
+      "steps": [
+        "Review 25 new approved examples: tactics; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L08-review.md"
+    },
+    {
+      "id": "L09",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 9/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L08"
+      ],
+      "steps": [
+        "Review 25 new approved examples: positional middlegames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L09-review.md"
+    },
+    {
+      "id": "L10",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 10/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L09"
+      ],
+      "steps": [
+        "Review 25 new approved examples: positional middlegames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L10-review.md"
+    },
+    {
+      "id": "L11",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 11/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L10"
+      ],
+      "steps": [
+        "Review 25 new approved examples: positional middlegames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L11-review.md"
+    },
+    {
+      "id": "L12",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 12/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L11"
+      ],
+      "steps": [
+        "Review 25 new approved examples: positional middlegames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L12-review.md"
+    },
+    {
+      "id": "L13",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 13/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L12"
+      ],
+      "steps": [
+        "Review 25 new approved examples: endgames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L13-review.md"
+    },
+    {
+      "id": "L14",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 14/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L13"
+      ],
+      "steps": [
+        "Review 25 new approved examples: endgames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L14-review.md"
+    },
+    {
+      "id": "L15",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 15/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L14"
+      ],
+      "steps": [
+        "Review 25 new approved examples: endgames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L15-review.md"
+    },
+    {
+      "id": "L16",
+      "batch": {"partition": "train"},
+      "title": "Review label batch 16/20: 25 train examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L15"
+      ],
+      "steps": [
+        "Review 25 new approved examples: endgames; partition=train. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L16-review.md"
+    },
+    {
+      "id": "L17",
+      "batch": {"partition": "validation"},
+      "title": "Review label batch 17/20: 25 validation examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L16"
+      ],
+      "steps": [
+        "Review 25 new approved examples: 13 opening + 12 tactical; partition=validation. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L17-review.md"
+    },
+    {
+      "id": "L18",
+      "batch": {"partition": "validation"},
+      "title": "Review label batch 18/20: 25 validation examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L17"
+      ],
+      "steps": [
+        "Review 25 new approved examples: 1 tactical + 12 positional + 12 endgame; partition=validation. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L18-review.md"
+    },
+    {
+      "id": "L19",
+      "batch": {"partition": "test"},
+      "title": "Review label batch 19/20: 25 test examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L18"
+      ],
+      "steps": [
+        "Review 25 new approved examples: 12 opening + 12 tactical + 1 positional; partition=test. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L19-review.md"
+    },
+    {
+      "id": "L20",
+      "batch": {"partition": "test"},
+      "title": "Review label batch 20/20: 25 test examples",
+      "track": "dataset",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "L19"
+      ],
+      "steps": [
+        "Review 25 new approved examples: 12 positional + 13 endgame; partition=test. Draw replacements only from the same locked partition/theme.",
+        "Replay best and played continuations, check every concrete claim, edit for detailed club-player teaching, then approve each record.",
+        "Record accepted IDs, rejected/replaced IDs, review time and difficult claims for a stronger-player check."
+      ],
+      "acceptance": [
+        "Exactly 25 new, nonempty, approved current revisions are listed; none duplicates an earlier batch or the pilot.",
+        "The dataset audit passes provenance, schema, split and evidence-reference checks; do not train or tune on test examples.",
+        "Human evidence links the batch export/audit and lists unresolved claims; unresolved examples are not accepted."
+      ],
+      "evidence": "artifacts/labels/L20-review.md"
+    },
+    {
+      "id": "T26",
+      "title": "Baseline models, memory and conversion smoke benchmark",
+      "track": "model",
+      "owner": "agent",
+      "hours": "3-5",
+      "depends_on": [
+        "L18",
+        "T24"
+      ],
+      "steps": [
+        "Benchmark untuned OLMo 2 7B Instruct, Qwen3 4B and the allowed hosted baseline on validation only.",
+        "Measure local memory/speed, schema success and blind-review outputs with pinned model/tokenizer/config revisions.",
+        "Smoke-test export/import compatibility before selecting the candidate with fewer severe errors, then usefulness, then local speed."
+      ],
+      "acceptance": [
+        "Evidence contains real model outputs and hardware measurements, not package-size estimates.",
+        "All models receive the same evidence and no reference answers; test partition remains untouched.",
+        "Unavailable hardware/model endpoints block the task or produce explicitly partial research, not a claimed winning model."
+      ],
+      "evidence": "artifacts/tasks/T26.md",
+      "test_file": "test_T26_baselines.py"
+    },
+    {
+      "id": "T27",
+      "title": "Human compute and training-run approval",
+      "track": "model",
+      "owner": "human",
+      "hours": "1-2",
+      "depends_on": [
+        "T26",
+        "T21"
+      ],
+      "steps": [
+        "Choose an available environment whose terms permit this workload; clarify Colab's chess-training restriction before relying on it.",
+        "Verify GPU memory/capacity, dataset permissions, checkpoint storage and any hard spending limit.",
+        "Record the exact approved training configuration and resume/storage plan."
+      ],
+      "acceptance": [
+        "Evidence establishes an actual permitted compute path, not a promise of free GPU access.",
+        "At least a tiny memory/setup smoke run fits without silent example truncation.",
+        "The user explicitly approves any paid compute; otherwise this gate stays incomplete."
+      ],
+      "evidence": "artifacts/tasks/T27.md"
+    },
+    {
+      "id": "T28",
+      "title": "Reproducible QLoRA training and checkpoint selection",
+      "track": "model",
+      "owner": "agent",
+      "hours": "4-8",
+      "depends_on": [
+        "T27",
+        "L16",
+        "T26"
+      ],
+      "steps": [
+        "Implement a pinned notebook/script for supervised QLoRA using the plan's conservative initial settings.",
+        "Use only the 400 training records, validate on the 50 validation records, checkpoint and persist seeds/configs/logs.",
+        "Count tokens for actual tokenizer/input/output; reject or deliberately narrow oversize examples instead of silently truncating."
+      ],
+      "acceptance": [
+        "Dry-run tests prove split isolation, label masking, complete token coverage and deterministic data order.",
+        "Evidence includes an actual training run, selected checkpoint and validation rationale; a notebook alone is insufficient.",
+        "Interrupted execution resumes from a valid checkpoint without secretly changing the data/config."
+      ],
+      "evidence": "artifacts/tasks/T28.md",
+      "test_file": "test_T28_training.py"
+    },
+    {
+      "id": "T29",
+      "title": "Locked held-out model evaluation",
+      "track": "model",
+      "owner": "agent",
+      "hours": "3-5",
+      "depends_on": [
+        "T28",
+        "L20"
+      ],
+      "steps": [
+        "Lock model/checkpoint/prompts, then generate tuned/base/hosted outputs on the fifty held-out examples once.",
+        "Run automatic checks, blind the outputs and export human rating forms without leaking references into generation.",
+        "Record errors, failures, latency and sample-size limitations; changing the model after viewing test results requires a new independent test set."
+      ],
+      "acceptance": [
+        "Assertions catch any held-out content in training inputs or checkpoints' data manifests.",
+        "Every result has model revision and configuration provenance, including failures.",
+        "Metrics distinguish automatic facts from human judgments and report counts, not unsupported broad competence claims."
+      ],
+      "evidence": "artifacts/tasks/T29.md",
+      "test_file": "test_T29_holdout.py"
+    },
+    {
+      "id": "T30",
+      "title": "Human blind model comparison and release decision",
+      "track": "model",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "T29"
+      ],
+      "steps": [
+        "Rate blinded held-out outputs against the chess evidence using the frozen rubric.",
+        "Have a second qualified reviewer check difficult/severe claims and record disagreement.",
+        "Decide whether the fine-tune improves usefulness without increasing critical errors; accept a negative result honestly."
+      ],
+      "acceptance": [
+        "Evidence contains actual ratings and an unblinding record.",
+        "Release examples contain no known unresolved critical error; uncertainty from fifty examples is stated.",
+        "Approval specifies which model remains the product default and why; fine-tuned status alone is not a pass."
+      ],
+      "evidence": "artifacts/tasks/T30.md"
+    },
+    {
+      "id": "T31",
+      "title": "Ollama quantization and post-export regression",
+      "track": "model",
+      "owner": "agent",
+      "hours": "3-5",
+      "depends_on": [
+        "T30"
+      ],
+      "steps": [
+        "Merge/convert the selected permitted model to supported GGUF, quantize for 16 GB RAM, and create an Ollama model definition.",
+        "Preserve adapter, model/config/license revisions and reproducible conversion commands.",
+        "Repeat validation and a fresh acceptance sample after quantization; integrate only if the human-selected default warrants it."
+      ],
+      "acceptance": [
+        "Real local requests produce valid replayable cards and recorded memory/latency.",
+        "Post-quantization errors are compared with the pre-export model; regressions are not hidden.",
+        "If a fine-tune was rejected, package the approved baseline or document the negative experiment without falsely calling it a deployed fine-tune."
+      ],
+      "evidence": "artifacts/tasks/T31.md",
+      "test_file": "test_T31_ollama.py"
+    },
+    {
+      "id": "T32",
+      "title": "Open-source release candidate and license inventory",
+      "track": "publish",
+      "owner": "agent",
+      "hours": "3-4",
+      "depends_on": [
+        "T25"
+      ],
+      "steps": [
+        "Prepare reproducible source, evaluation examples, contribution guidance and a license/provenance inventory for code/models/assets/data.",
+        "Document engine/model download steps without committing keys, runtime databases or giant generated weights.",
+        "Create a local release checklist and minimal fresh-install check; external publication remains a separate approval."
+      ],
+      "acceptance": [
+        "Rights/attribution entries cover python-chess, Stockfish, board pieces, models and sample data.",
+        "Tracked file scan finds no credentials, private submissions or unapproved label exports.",
+        "A fresh install can run the sample/offline checks; inaccessible services are disclosed."
+      ],
+      "evidence": "artifacts/tasks/T32.md",
+      "test_file": "test_T32_release.py"
+    },
+    {
+      "id": "T33",
+      "title": "Human invited-beta destination and publication approval",
+      "track": "publish",
+      "owner": "human",
+      "hours": "1-2",
+      "depends_on": [
+        "T32",
+        "T18"
+      ],
+      "steps": [
+        "Choose a currently available hosting/storage/provider combination within the actual budget.",
+        "Review provider eligibility, audience, retention, external-data handling, quotas and admin-route isolation.",
+        "Record exact target accounts/URLs and explicit authorization for publication; unlisted URLs still need abuse controls."
+      ],
+      "acceptance": [
+        "Evidence identifies real accounts/destinations and provider availability.",
+        "The user explicitly authorizes the external publish action and configured data processing.",
+        "Credentials are configured privately; no imaginary free production capacity or approvals."
+      ],
+      "evidence": "artifacts/tasks/T33.md"
+    },
+    {
+      "id": "T34",
+      "title": "Hosted-beta configuration and deployment verification",
+      "track": "publish",
+      "owner": "agent",
+      "hours": "4-6",
+      "depends_on": [
+        "T33"
+      ],
+      "steps": [
+        "Add the minimum deployment configuration for the approved destination and durable opt-in feedback.",
+        "Implement request/global quotas, review tokens, bounded work, expiry, retry-later failure and operator disable.",
+        "Deploy only to the approved destination and verify real anonymous-user access, cold starts and disabled reviewer routes."
+      ],
+      "acceptance": [
+        "Tests cover quotas, private review access, expiry, restart failure and provider unavailability.",
+        "Evidence records actual deployment URL, build/config revision, smoke results and rollback/disable procedure.",
+        "No publication beyond the approved scope; unavailable free hosting leaves a documented blocker."
+      ],
+      "evidence": "artifacts/tasks/T34.md",
+      "test_file": "test_T34_beta.py"
+    },
+    {
+      "id": "T35",
+      "title": "Human four-week beta feedback and learning review",
+      "track": "publish",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "T34"
+      ],
+      "steps": [
+        "Invite 15-20 target testers through the user; collect consenting feedback and weekly return counts.",
+        "Review comprehension/transfer exercises, serious errors, completion/dropoff and real cost per completed review.",
+        "Decide whether to iterate, keep it as a portfolio tool, or investigate a narrow paid use case."
+      ],
+      "acceptance": [
+        "Evidence uses actual counts and consented observations, including inactive users and failures.",
+        "No invented users, rating gains, revenue or retention.",
+        "Public bugs produce focused follow-up tasks; feedback never auto-promotes itself to training truth."
+      ],
+      "evidence": "artifacts/tasks/T35.md"
+    },
+    {
+      "id": "T36",
+      "title": "Human optional startup discovery and paid-pilot decision",
+      "track": "business",
+      "owner": "human",
+      "hours": "4-8",
+      "depends_on": [
+        "T35"
+      ],
+      "steps": [
+        "Interview ten players and three coaches about recent problems, tools and spending; the user handles outreach.",
+        "Compare a narrow coach/student workflow with existing alternatives and measure a concrete willingness-to-pay test.",
+        "Document whether paid pilots, repeat use and operating economics justify business work; otherwise close the portfolio scope."
+      ],
+      "acceptance": [
+        "Evidence contains real interview summaries and paid commitments only if they occurred.",
+        "Any 60% preference, five week-four returners or three customers are proposed decision signals, never fabricated results.",
+        "Decision explicitly says continue, narrow, or stop business expansion."
+      ],
+      "evidence": "artifacts/tasks/T36.md"
+    }
+  ]
+}

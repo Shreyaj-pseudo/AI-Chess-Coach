@@ -1,0 +1,9 @@
+name: chess-coach
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12.16
+  - pip=26.2.2
+  - pip:
+      - -r requirements.txt

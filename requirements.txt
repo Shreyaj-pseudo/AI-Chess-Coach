@@ -1,4 +1,11 @@
-python-chess
-requests
-python-dotenv
-notopenai
+# Runtime only; training dependencies belong to the later model-training task.
+# python-chess is the old package name; chess provides the same import/API.
+chess==1.11.2
+requests==2.34.2
+python-dotenv==1.2.4
+
+# Requests transport dependencies, pinned from the tested fresh environment.
+certifi==2026.10.23
+charset-normalizer==3.5.2
+idna==3.20
+urllib3==2.8.0

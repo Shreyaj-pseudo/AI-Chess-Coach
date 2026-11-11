@@ -12,6 +12,7 @@ env/
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # OS-specific files
 .DS_Store
@@ -49,3 +50,7 @@ stockfish-windows-x86-64-avx2.zip
 # Your own backups, notes, etc.
 *.bak
 *.swp
+
+# Local workflow state, generated evidence and private dataset/model artifacts
+.workflow/
+artifacts/

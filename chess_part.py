@@ -3,11 +3,12 @@ import chess.engine
 import chess.pgn
 import io
 import requests
+from engine_config import resolve_stockfish_path
 
 
 class ChessAnalyzer:
-    def __init__(self, stockfish_path = "C:/Users/shrey/OneDrive/Documents/coding_shit/Vs_code/Chess_project/stockfish/stockfish-windows-x86-64-avx2.exe"):
-        self.stockfish_path = stockfish_path
+    def __init__(self, stockfish_path=None):
+        self.stockfish_path = resolve_stockfish_path(stockfish_path)
         self.best = None
         self.score = None
         self.phase = None
