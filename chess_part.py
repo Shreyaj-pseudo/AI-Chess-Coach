@@ -1,9 +1,8 @@
 import chess
 import chess.engine
-import chess.pgn
-import io
 import requests
 from engine_config import resolve_stockfish_path
+from pgn_input import parse_pgn
 
 
 class ChessAnalyzer:
@@ -38,9 +37,7 @@ class ChessAnalyzer:
             return best_move, result['score']
 
     def opening_moves(self, pgn_string):
-        game = chess.pgn.read_game(io.StringIO(pgn_string))
-        if not game:
-            return []
+        game = parse_pgn(pgn_string)
         board = game.board()
         moves = []
         for move in game.mainline_moves():

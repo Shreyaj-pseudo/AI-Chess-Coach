@@ -1,0 +1,6 @@
+[Event "Original T02 promotion fixture"]
+[SetUp "1"]
+[FEN "7k/P7/8/8/8/8/8/7K w - - 0 42"]
+[Result "*"]
+
+42. a8=Q+ Kh7 *

@@ -15,12 +15,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         print(f"Python: {platform.python_version()} ({sys.executable})")
-        for package, module in (("chess", "chess"), ("requests", "requests"), ("python-dotenv", "dotenv")):
+        for package, module in (("chess", "chess"), ("requests", "requests"), ("python-dotenv", "dotenv"), ("pydantic", "pydantic")):
             importlib.import_module(module)
             print(f"{package}: {version(package)}")
-        for module in ("AI_process", "chess_part", "opening_agent", "middlegame_agent", "endgame_agent", "data.data_collection"):
+        for module in ("AI_process", "chess_part", "opening_agent", "middlegame_agent", "endgame_agent", "data.data_collection", "analysis_records"):
             importlib.import_module(module)
-        print("Prototype modules: import successfully")
+        print("Project modules: import successfully")
         path = resolve_stockfish_path()
         print(f"Stockfish path: {path}")
         if args.engine:

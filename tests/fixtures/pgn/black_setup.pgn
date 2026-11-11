@@ -1,0 +1,6 @@
+[Event "Original T02 Black to move fixture"]
+[SetUp "1"]
+[FEN "7k/8/8/8/8/8/p7/7K b - - 0 42"]
+[Result "*"]
+
+42... a1=Q+ 43. Kh2 *
