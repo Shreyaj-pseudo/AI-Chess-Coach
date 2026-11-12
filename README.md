@@ -1,6 +1,6 @@
 # Chess AI Coach
 
-A local-first chess coaching project. T01-T06 provide a reproducible Miniconda environment, strict PGN replay, validated records, persistent Stockfish move analysis, and referenced board facts. The existing phase scripts are prototypes: a working web coach and model inference come in later tasks.
+A local-first chess coaching project. T01-T08 provide a reproducible Miniconda environment, strict PGN replay, validated records, Stockfish move analysis, referenced board facts, cached opening statistics, and rule-aware endgame tablebase evidence. The existing phase scripts are prototypes: a working web coach and model inference come in later tasks.
 
 Roadmap: [audited plan](docs/PLAN.md), [daily agent workflow](docs/DAILY_WORKFLOW.md), [detailed task backlog](docs/tasks.json).
 
@@ -32,7 +32,7 @@ print(first.pgn_prefix)
 
 `learner_positions` requires White or Black explicitly. Each returned board is an independent copy with its prior move stack, preserving repetition history; `ply` counts half-moves from this PGN's starting position, including custom setups. `pgn_prefix` contains only moves before the reviewed move and necessary setup headers. It excludes identity/event headers, comments, annotations, variations, the reviewed move and later moves. Use that prefix for future model context, not the original uploaded PGN or untrusted game headers.
 
-Comments and side variations are structurally checked and discarded; their move legality is not analyzed. Check/capture markers and explicit results are checked against the mainline. Numeric annotations are discarded. The original seven small fixtures under `tests/fixtures/pgn/` cover both colors, castling, en passant, promotion, custom starts, comments, checkmate and repetition. The legacy opening-move helper now uses this shared strict parser; its opening-classification logic is still deferred to T07.
+Comments and side variations are structurally checked and discarded; their move legality is not analyzed. Check/capture markers and explicit results are checked against the mainline. Numeric annotations are discarded. The original seven small fixtures under `tests/fixtures/pgn/` cover both colors, castling, en passant, promotion, custom starts, comments, checkmate and repetition. The legacy opening-move helper uses this shared parser. T07's new opening client uses exact positions; legacy phase/coordinator migration remains T12.
 
 ## Analysis records and consistent scores (T03)
 
@@ -183,6 +183,59 @@ After loading an evidence record, call `BoardEvidence.model_validate_json(...)` 
 
 At T06 there is no prose explanation to approve. The automatic tests check board facts. Strategic correctness, appropriate uncertainty, teaching clarity and usefulness will still require human review; unsupported claims should be omitted or qualified.
 
+## Exact-position opening context (T07)
+
+Inspect opening data without starting Stockfish or calling a model:
+
+```powershell
+python -m scripts.inspect_opening tests/fixtures/pgn/castling.pgn --color white --ply 5
+```
+
+The [official Masters](https://raw.githubusercontent.com/lichess-org/api/master/doc/specs/tags/openingexplorer/masters.yaml) and [Lichess games](https://raw.githubusercontent.com/lichess-org/api/master/doc/specs/tags/openingexplorer/lichess.yaml) specs declare OAuth authentication. The unauthenticated live check on 2026-11-12 returned HTTP 401 for both endpoints. Configure `LICHESS_API_TOKEN` in the shell or add it to your **existing** project `.env` (shell wins; do not overwrite other keys). You can create a personal token through [Lichess account settings](https://lichess.org/account/oauth/token/create). Tokens are sent only as an HTTPS bearer header, never in query parameters, cache entries or exported JSON. No token is needed for offline tests or Stockfish. Missing/rejected authentication produces explicit unavailable source results with configuration guidance.
+
+The command prints an `OpeningContext` with the reviewed pre-move PositionContext, a separate result for each database, query/filter provenance, fetch timestamp, cache-hit flag, sample/outcome counts, reported name/ECO when available, and up to 12 common legal moves. Counts are White wins/draws/Black wins, not learner-oriented engine evaluations. `played_games` is the returned sample count for the exact played UCI move; it is null if that move is unlisted. Being absent from a top-12 response does not mean a move has never been played or is bad. Move-level names for subsequent positions and uploaded PGN opening headers/comments are not used to name the reviewed root. API game/player references are not retained.
+
+Defaults are explicit:
+
+- Endpoints: `https://explorer.lichess.org/masters` and `/lichess`, queried sequentially.
+- Masters: games since 1952. Lichess: rated standard rapid/classical games, rating buckets `1200,1400,1600`. The documented bucket semantics cover **1200 <= rating < 1800**, not the 1800-1999 bucket. These are database group filters, not a guarantee about each individual player's rating.
+- HTTP lookup only through actual full move **20**, including Black's 20th move. The PGN's relative ply does not override a custom setup's full-move counter.
+- Fewer than **20 games** is `sparse`; zero is a valid empty sample. A reported name may still be shown, with no claim that the sample establishes opening theory.
+- SQLite cache at `artifacts/opening_cache.sqlite3`, 24-hour TTL and at most 512 statistics entries. Override its location with `--cache PATH`. It stores sanitized statistics, not raw player/game metadata or secrets. Query filters and source are part of the cache key.
+
+Position identity includes placement, side to move, castling rights and legally relevant en passant; clocks are normalized for database queries. Transpositions share cached statistics even if move orders or counters differ. The full original history remains in PositionContext for rules/engine analysis. An opening result never uses the played move or later moves to query a future board. Beyond the opening window, no HTTP is sent; the most recent fresh **cached ancestor** name can be returned as separately referenced historical context. If earlier positions were never looked up or their cache expired, historical context stays unavailable. Current names from the two sources are retained independently rather than silently reconciled.
+
+All client instances serialize HTTP with a process-wide lock. Requests have 3-second connect and 5-second read-inactivity timeouts, a 256 KiB streamed body cap, no redirects and no automatic retries. These are not a hard whole-request/queue deadline. Invalid JSON, illegal/mismatched moves/counts, HTTP failures and cache errors produce explicit source-level unavailability, allowing the later pipeline to keep engine evidence. Responses and sessions are closed. A 429 pauses all explorer requests for at least 60 seconds (or a longer Retry-After), without blocking/sleeping; fresh cached data remains readable. Cooldown is persisted in the same cache for CLI restarts. Separate processes/cache files do not share a global request lock: this client targets the planned single-worker local app. [Lichess rate-limit guidance](https://lichess.org/page/api-tips)
+
+Use `with OpeningExplorer() as explorer: context = explorer.lookup(position)` for the synchronous shared API. It accepts the validated T03 PositionContext and returns a versioned record without changing analysis IDs or engine records. Lookup failures are data statuses, not fabricated zero samples or move-quality verdicts. Opening popularity and names do not establish superiority; engine/curated evidence is still required for tactical/error claims. The old SAN-membership phase prototype remains unmigrated; use this new API/CLI until T12 integrates the shared pipeline.
+
+## Endgame tablebase evidence (T08)
+
+Inspect a small endgame without an engine search or model call:
+
+```powershell
+python -m scripts.inspect_tablebase tests/fixtures/pgn/tablebase_mate.pgn --color white --ply 1
+```
+
+The public [Lichess standard tablebase endpoint](https://raw.githubusercontent.com/lichess-org/api/master/doc/specs/tags/tablebase/standard.yaml) is `https://tablebase.lichess.org/standard`. The adapter sends the actual six-field FEN, preserving the halfmove clock and en passant, with `dtc=never`. It deliberately limits eligibility to **at most seven pieces, including kings, and no castling rights**, avoiding partial eight-piece/conversion-only coverage. Nonstandard variants/invalid histories are rejected before HTTP. Unsupported valid positions return `ineligible` and `engine_fallback=true`.
+
+The shared API is `with TablebaseClient() as client: context = client.probe(board, learner_color)`, from `tablebase.py`. Supply the board with its real history, such as a T02 learner decision's board. The returned versioned `TablebaseContext` includes initial/current FEN, full UCI history, learner, local rule context, source/learner categories, optional signed distances, ranked provider moves, per-move child FEN/rules, status, provenance and an explicit fallback flag. A JSON import rechecks history, rule context, child legality/SAN/zeroing, perspective, distances, coverage and derived results. It cannot independently prove that the provider's underlying table files are correct.
+
+Terminal checkmate, stalemate, insufficient material, automatic seventy-five moves and fifth repetition are resolved locally with `status=terminal`, the learner's result, no HTTP query and no engine fallback. A claimable fifty-move/threefold draw is recorded as an **option for the side to move**, not automatically declared game over. Repetition is reconstructed from history, including repeats elsewhere in the reversible phase; a FEN-only lookup cannot see that history. Decisive results affected by draw claims/reversible repetitions remain `unknown`, with engine fallback, while the provider category is preserved.
+
+The provider's root category is from the current side to move, and move rows describe the **opponent's position after the move**. `source_category`/`source_pov` preserve that meaning; `category`, `outcome`, `pov` and signed distances are normalized to the learner. A child `loss` for Black after White's move can therefore be a learner `win` for White. Locally verified terminal outcomes take precedence over claim options when the move actually ends the game.
+
+Metric/category interpretation is explicit:
+
+- `dtz_plies` measures distance to a zeroing event, with the provider's Syzygy encoding/rounding; it is **not mate distance**. `precise_dtz_plies` is populated only when supplied consistently by the provider. A move's `zeroing` flag is independently checked as a pawn move or capture.
+- `dtm_plies` is a separate optional provider metric, never filled from DTZ. All distances use plies, not full moves. Metric values do not by themselves justify a forced-mate claim under current draw rules, and no T03 MateScore is synthesized from them.
+- `cursed-win`/`blessed-loss` retain those categories and resolve to draw under the fifty-move rule when local history/claims do not introduce further uncertainty. `syzygy-win/loss`, `maybe-win/loss` and `unknown` retain uncertainty instead of becoming categorical wins/losses. [Provider category definitions](https://raw.githubusercontent.com/lichess-org/api/master/doc/specs/schemas/TablebaseJson.yaml)
+- `engine_fallback=true` means the root or at least one move result is unknown, or eligibility/service failure prevented complete evidence. Available tablebase data is retained. The adapter/CLI never starts Stockfish automatically; the coordinator will route fallback in T12.
+
+Requests share a process-wide lock and cooldown with the opening client via `lichess_http.py`. They use 3-second connect/5-second read-inactivity timeouts, a 256 KiB body cap, no redirects, no retries and no credentials. HTTP errors, malformed/inconsistent data and missing/duplicate/illegal move rows produce visible fallback. Every legal root move must appear exactly once. Sessions/responses are closed. A 429 establishes a shared cooldown of at least 60 seconds, honoring Retry-After without sleeping. Opening cooldown persistence remains intact; tablebase-only cooldowns are currently process-local and will need persistence with restartable jobs. The client has no tablebase-result cache or local table-file downloads, and the timeouts are not a hard whole-request deadline.
+
+The real public-service smoke found the sample to be winning, reported DTZ=1 and DTM=1 as separate fields, and verified `Qg7#` among 23 legal moves. The same position at halfmove clock 99 retained the provider's win category but produced a qualified `unknown` outcome because a fifty-move claim is available. The already-mated board resolved locally as Black's loss without another HTTP request.
+
 ## Set up with Miniconda on Windows
 
 Run from the repository root in a Miniconda PowerShell prompt:
@@ -261,6 +314,8 @@ python -m unittest discover -s tests -p test_T03_records.py -v
 python -m unittest discover -s tests -p test_T04_engine.py -v
 python -m unittest discover -s tests -p test_T05_candidates.py -v
 python -m unittest discover -s tests -p test_T06_facts.py -v
+python -m unittest discover -s tests -p test_T07_openings.py -v
+python -m unittest discover -s tests -p test_T08_tablebases.py -v
 python -m unittest discover -s tests -v
 python scripts/workflow.py status --track mvp
 python scripts/workflow.py prompt --track mvp
@@ -275,9 +330,9 @@ Task evidence and logs are in gitignored `artifacts/tasks/` and `.workflow/`. Ke
 - Phase functions print prompts and return no generated coaching explanation; no model is called.
 - The legacy coordinator repeats analysis, and each legacy load starts multiple engine processes. T04's new session reuses its process; the coordinator migration is T12.
 - Legacy best-move, played-move and principal-variation searches have different budgets and unnormalized comparisons. T05's new pipeline uses consistent budgets and learner-oriented scores.
-- Opening identification uses the first ten plies and SAN membership instead of the exact reviewed position; HTTP calls lack timeouts.
+- Legacy opening identification uses the first ten plies and SAN membership; its old HTTP path lacks timeouts. T07's new API/CLI uses exact positions, bounded requests, caching and explicit statuses; phase/coordinator migration remains T12.
 - Phase detection uses piece count, and piece lists accumulate on analyzer reuse.
 - The collector loads all games before sampling and prints UCI, while the analyzer expects SAN.
 - No website, reliable whole-game coach, approved training corpus, trained model or deployment exists yet. Existing six draft labels remain untrusted.
 
-These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership; T05 provides candidate and played-move evidence; T06 provides referenced board observations and changes. External chess context, coaching and the website remain later tasks.
+These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership; T05 provides candidate and played-move evidence; T06 provides referenced board observations and changes; T07 provides opening statistics with honest provenance/fallbacks; T08 provides endgame tablebase evidence with draw-rule context. Whole-game selection, coaching and the website remain later tasks.
