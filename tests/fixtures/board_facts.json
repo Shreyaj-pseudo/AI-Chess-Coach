@@ -1,0 +1,18 @@
+{
+  "pinned_defender": {
+    "fen": "k3r3/8/8/7n/4RB2/8/8/4K3 b - - 0 1",
+    "description": "White rook e4 geometrically defends bishop f4 while absolutely pinned by rook e8."
+  },
+  "defended_attacked_piece": {
+    "fen": "k7/8/8/8/6b1/5N2/6P1/4K3 w - - 0 1",
+    "description": "Bishop g4 attacks knight f3, which pawn g2 geometrically defends."
+  },
+  "opening_file": {
+    "fen": "7k/8/8/2p5/1P6/8/8/7K w - - 0 1",
+    "description": "b4xc5 removes the last b-file pawn; the c-file still has a white pawn."
+  },
+  "pawn_structure": {
+    "fen": "7k/8/7p/4P3/3p4/4P3/6P1/7K w - - 0 1",
+    "description": "White e5 is passed, e3 is not; both e-pawns are doubled and isolated."
+  }
+}

@@ -95,12 +95,14 @@ class StockfishSession:
         self._command_task = None
         return result
 
-    async def analyse(self, board: chess.Board, *, time_limit=1.5):
-        """Return python-chess's InfoDict; preserve history and leave board alone.
+    async def analyse(self, board: chess.Board, *, time_limit=1.5, multipv=None, root_moves=None):
+        """Return InfoDict, or a list when multipv is supplied; preserve history.
 
         Budget is 0 < time_limit <= 5 seconds, plus one second for UCI response.
         Queue wait is separate. Startup has its own five-second deadline.
         Failures are surfaced, never silently retried; the next call can recover.
+        MultiPV is limited to 1-3; root_moves restricts the original board's legal
+        root choices without forcing any later reply.
         """
         if (isinstance(time_limit, bool) or not isinstance(time_limit, (int, float))
                 or not 0 < time_limit <= self.MAX_SEARCH_SECONDS):
@@ -108,6 +110,17 @@ class StockfishSession:
         if not isinstance(board, chess.Board) or not board.is_valid() or board.chess960 or board.uci_variant != "chess":
             raise ValueError("Stockfish requires a valid standard chess board.")
         position = board.copy(stack=True)
+        search_options = {}
+        if multipv is not None:
+            if type(multipv) is not int or not 1 <= multipv <= 3:
+                raise ValueError("Stockfish multipv must be an integer from 1 to 3.")
+            search_options["multipv"] = multipv
+        if root_moves is not None:
+            roots = tuple(root_moves)
+            if (not roots or any(not isinstance(move, chess.Move) or move not in position.legal_moves for move in roots)
+                    or len(set(roots)) != len(roots)):
+                raise ValueError("Stockfish root_moves must be nonempty, unique legal moves.")
+            search_options["root_moves"] = roots
         async with self._lock:
             if self._closed:
                 raise EngineSessionError("Stockfish session is closed; create a new session.")
@@ -117,7 +130,7 @@ class StockfishSession:
                     await self._start()
                 stage = "search"
                 async with asyncio.timeout(time_limit + self.RESPONSE_GRACE):
-                    return await self._command(self._engine.analyse(position, chess.engine.Limit(time=time_limit)))
+                    return await self._command(self._engine.analyse(position, chess.engine.Limit(time=time_limit), **search_options))
             except TimeoutError as error:
                 await _finish_cleanup(self._dispose())
                 raise EngineTimeoutError(

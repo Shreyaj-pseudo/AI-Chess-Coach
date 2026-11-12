@@ -42,7 +42,7 @@ def main(argv=None):
         for package, module in (("chess", "chess"), ("requests", "requests"), ("python-dotenv", "dotenv"), ("pydantic", "pydantic")):
             importlib.import_module(module)
             print(f"{package}: {version(package)}")
-        for module in ("AI_process", "chess_part", "opening_agent", "middlegame_agent", "endgame_agent", "data.data_collection", "analysis_records", "engine_session"):
+        for module in ("AI_process", "chess_part", "opening_agent", "middlegame_agent", "endgame_agent", "data.data_collection", "analysis_records", "engine_session", "candidate_analysis", "board_facts"):
             importlib.import_module(module)
         print("Project modules: import successfully")
         path = resolve_stockfish_path()

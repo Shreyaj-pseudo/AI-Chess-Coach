@@ -1,6 +1,6 @@
 # Chess AI Coach
 
-A local-first chess coaching project. T01-T04 provide a reproducible Miniconda environment, strict PGN replay, validated analysis records and a persistent Stockfish session. The existing analysis scripts are prototypes: a working web coach and model inference come in later tasks.
+A local-first chess coaching project. T01-T06 provide a reproducible Miniconda environment, strict PGN replay, validated records, persistent Stockfish move analysis, and referenced board facts. The existing phase scripts are prototypes: a working web coach and model inference come in later tasks.
 
 Roadmap: [audited plan](docs/PLAN.md), [daily agent workflow](docs/DAILY_WORKFLOW.md), [detailed task backlog](docs/tasks.json).
 
@@ -98,13 +98,90 @@ async def main():
 asyncio.run(main())
 ```
 
-The session uses the shared executable discovery below and fixes Stockfish to **one engine thread and 128 MB hash**. Searches default to 1.5 seconds and accept a finite positive time budget up to 5 seconds. Each search has an additional 1-second response allowance; startup/initialization has a separate 5-second deadline. These limits bound individual operations, not queue wait or an entire game review. Search results remain python-chess `InfoDict` values; T05 will build the candidate/played-move records from them. The input board is copied with its full move stack, retaining repetition history.
+The session uses the shared executable discovery below and fixes Stockfish to **one engine thread and 128 MB hash**. Searches default to 1.5 seconds and accept a finite positive time budget up to 5 seconds. Each search has an additional 1-second response allowance; startup/initialization has a separate 5-second deadline. These limits bound individual operations, not queue wait or an entire game review. Search results remain python-chess `InfoDict` values, or a list when `multipv=1`, `2` or `3` is supplied. Optional `root_moves` restricts legal moves at the original root. The input board is copied with its full move stack, retaining repetition history.
 
 Concurrent calls wait on a lock. Missing/incompatible executables raise `EngineUnavailableError`; startup/search deadlines raise `EngineTimeoutError`; engine exits and closed sessions raise `EngineSessionError`. Failure or timeout terminates and reaps the process before reporting the error; a later search may start a fresh one. There is no automatic retry of the failed search. Cancel an active search's asyncio task **and await it** to abort its engine and propagate `CancelledError`; cancelling a queued task leaves the active engine alone. Protocol futures stay alive during termination to avoid a cancellation bug in the installed python-chess version.
 
 Context exit or `await session.aclose()` permanently closes the session, drains the bounded active search, rejects queued searches, and requests graceful quit. An unresponsive quit is terminated after 2 seconds, followed by up to 2 seconds to confirm exit. Cleanup is joined even if the caller cancels shutdown. An unconfirmed exit remains a visible error and prevents spawning a replacement over the unreaped process. Always await shutdown before stopping the event loop. The session is for standard chess, not variants/Chess960.
 
-The setup smoke below now exercises this session with two positions, validates both PVs, checks process reuse, and confirms the child exit code. Offline lifecycle tests use fakes and a real python-chess analysis future; they do not launch Stockfish. The old synchronous `ChessAnalyzer` and phase prompt scripts still follow their prototype path; the new session is the foundation for T05-T12 and does not yet change their coaching output.
+The setup smoke below now exercises this session with two positions, validates both PVs, checks process reuse, and confirms the child exit code. Offline lifecycle tests use fakes and a real python-chess analysis future; they do not launch Stockfish. The old synchronous `ChessAnalyzer` and phase prompt scripts still follow their prototype path; the new session supports the new pipeline and does not yet change their coaching output.
+
+## Candidate and played-move evidence (T05)
+
+Analyze one decision with real Stockfish and print a validated `AnalysisRecord` as JSON:
+
+```powershell
+python -m scripts.analyze_position tests/fixtures/pgn/played_blunder.pgn --color white --ply 3
+```
+
+`--ply` is the relative half-move number shown by `scripts.inspect_pgn`, so ply 3 here is White's `2. g4` after `1. f3 e5`. The analysis records up to three engine candidates and the played move's own continuation, including `g4 Qh4#` in this example. No model, opening API or website is involved. `--time 0.15` gives a short smoke search; the default is 1.5 seconds per search. Output includes full UCI PVs, learner-oriented centipawn/mate scores, engine version, search-profile hashes, budget, reported depth/nodes/time, and uncertainty notes.
+
+The shared async API is:
+
+```python
+import asyncio
+from analysis_records import PositionContext, source_game_id
+from candidate_analysis import analyze_position
+from engine_session import StockfishSession
+from pgn_input import learner_positions, parse_pgn
+
+async def main():
+    game = parse_pgn("1. f3 e5 2. g4 *")
+    position = PositionContext.from_decision(
+        learner_positions(game, "white")[1], game_id=source_game_id(game)
+    )
+    async with StockfishSession() as session:
+        record = await analyze_position(session, position)
+    print(record.candidates[0].san, record.candidates[0].pv_san)
+    print(record.played.pv_san, record.played.score, record.loss_cp)
+    print(record.uncertainty)
+
+asyncio.run(main())
+```
+
+The first search requests MultiPV=3. If the played move appears there, its exact candidate evidence is reused. Otherwise, a second search uses MultiPV=1 and `root_moves=(played_move,)` from the **same pre-move board with history**, leaving the opponent free to choose its engine-best reply. Both searches use the same time budget. Full PVs are retained, never trimmed to a display length. Missing/malformed/illegal lines, wrong restricted roots, duplicate candidates, missing depth/nodes/time, and continuations after terminal positions fail validation. A nonterminal played move must have an opponent reply; otherwise the caller gets an actionable failure to rerun with a longer budget. Mating moves and moves ending an automatic draw may legitimately have a one-ply PV. Stockfish may include additional moves after an automatic draw; this API rejects those lines rather than truncating their evidence, so some draw-transition positions currently fail analysis.
+
+`elapsed_seconds` is Stockfish's reported search time, not request wall time or queue/startup latency. Nodes are the engine's reported search counters and must not be summed across MultiPV entries. The profile hash is SHA-256 of compact sorted JSON of `{"options":{"Threads":1,"Hash":128,"MultiPV":N},"limit":{"time":seconds}}`; root restrictions are stored separately. MultiPV=3 and a restricted MultiPV=1 allocate effort differently and receive different hashes plus an explicit qualification.
+
+The builder preserves engine ranking and negative score gaps, and adds notes for inconsistent scores/ranking, missing scores, score bounds, uneven candidate depths, depth below 8, and ordinary gaps below 30 centipawns. These are conservative heuristics, not calibrated mistake thresholds or proof of stable analysis. It does not observe score changes over iterative deepening or automatically reconfirm a search. Mate values remain separate from centipawns; `loss_cp` is `None` for mate/unavailable comparisons. No categorical mistake grade or coaching verdict is generated by T05. Later consumers must honor these notes; prose validation and the explanation model arrive in T10-T12.
+
+## Concrete board facts and references (T06)
+
+Include deterministic facts with the single-position analysis:
+
+```powershell
+python -m scripts.analyze_position tests/fixtures/pgn/played_blunder.pgn --color white --ply 3 --facts
+```
+
+Without `--facts`, the command still prints the original T05 analysis JSON. With it, output is an envelope containing `analysis` and `board_evidence`. The evidence is a separate versioned record linked by `analysis_id`; adding facts does not change the analysis schema, scores or content ID. It can be large because it preserves all supported facts at every ply of every unique candidate/played line. Compact model-context selection is T11.
+
+Each position has a `(candidate_id, ply)` reference, FEN, `facts`, and `added`/`removed` facts relative to the preceding position on that same line. Ply zero is the pre-move root; ply one is after the candidate/played move; ply two is after the opponent's reply. A fact is a typed `(kind, subject, value)`, such as `("absolute_pin", "e4", true)` or `("material_count", "black.pawn", 7)`. Changed values appear as removal of the old observation and addition of the new one; root snapshots have no changes. Lines shared by the played move and candidates are stored once per candidate ID.
+
+| Facts | Definition and limits |
+| --- | --- |
+| `piece` | Piece symbol on each square, or null for a confirmed empty square |
+| `material_count`, `material_points` | Counts by color/type and conventional P=1, N/B=3, R=5, Q=9, K=0 totals; these totals are not engine evaluations |
+| `turn`, `in_check`, `termination` | Side to move, whether that side is checked, and automatic game ending; claimable draws are not automatically declared |
+| `legal_check`, `legal_capture` and counts | UCI-keyed SAN moves legal for the actual side to move; includes en passant and checking captures; no continuation moves after automatic game over |
+| `attackers`, `defenders` | Source squares geometrically attacking each occupied square; pinned pieces count, and lists do not establish legal captures or tactical wins |
+| `absolute_pin` | Whether moving that piece off its pin line would expose its own king; relative pins to a queen/rook are not detected |
+| `open_file` | No pawn of either color anywhere on that file; says nothing about whether controlling it is strategically useful |
+| `passed_pawn` | No enemy pawn ahead on the same or adjacent files; does not establish a clear promotion route |
+| `isolated_pawn`, `doubled_pawn` | No friendly pawn on either neighboring file; or at least two friendly pawns on its file, respectively |
+| `hanging_piece`, `winning_tactic` | Always null, meaning unknown. Attack/defense counts alone cannot set these to true or false. |
+
+`board_facts.extract_board_facts(board)` uses only python-chess and preserves the board/history. `build_board_evidence(record)` reconstructs every line from the full position history. `fact_at(record, FactReference(candidate_id=..., ply=..., kind=..., subject=...))` independently recomputes the requested fact at the exact referenced state. Unknown lines, out-of-range plies and unsupported subjects fail; an empty attack list is distinct from an unavailable fact. For the sample, `legal_check/d8h4` is `Qh4#` at played-line ply one and is unavailable at the White-to-move root; ply two has termination `checkmate`.
+
+After loading an evidence record, call `BoardEvidence.model_validate_json(...)` and then `.validate_for(record)` before trusting it. The latter recomputes all facts, FENs, references and deltas, rejecting fabricated or incomplete evidence. Structural validation/content IDs alone do not prove chess truth. The catalog is deliberately limited: empty-square control, relative pins, forks, sacrifices, trapped/hanging pieces and long-term strategic merit are not inferred. T05's rejection of engine PVs extending beyond automatic draws remains in effect.
+
+### When you review explanations
+
+- **T11:** automated checks cover supported facts and references; they cannot prove all strategic prose.
+- **T12:** start manually inspecting the first real generated cards once the model is connected. Replay the recommended and played lines, check concrete claims at the referenced ply, and check whether comparisons and the lesson are clear/useful. Do not wait for bulk labeling to give feedback.
+- **T18:** formal human demo/learning review, including feedback from target players.
+- **T19 / T23:** annotation tooling arrives at T19; T23 is the 30-example pilot before scaling training labels. A stronger reviewer checks at least ten difficult pilot examples. Approved label batches follow; generated drafts are not automatically trusted training answers.
+
+At T06 there is no prose explanation to approve. The automatic tests check board facts. Strategic correctness, appropriate uncertainty, teaching clarity and usefulness will still require human review; unsupported claims should be omitted or qualified.
 
 ## Set up with Miniconda on Windows
 
@@ -182,6 +259,8 @@ python -m unittest discover -s tests -p test_T01_environment.py -v
 python -m unittest discover -s tests -p test_T02_pgn.py -v
 python -m unittest discover -s tests -p test_T03_records.py -v
 python -m unittest discover -s tests -p test_T04_engine.py -v
+python -m unittest discover -s tests -p test_T05_candidates.py -v
+python -m unittest discover -s tests -p test_T06_facts.py -v
 python -m unittest discover -s tests -v
 python scripts/workflow.py status --track mvp
 python scripts/workflow.py prompt --track mvp
@@ -195,10 +274,10 @@ Task evidence and logs are in gitignored `artifacts/tasks/` and `.workflow/`. Ke
 
 - Phase functions print prompts and return no generated coaching explanation; no model is called.
 - The legacy coordinator repeats analysis, and each legacy load starts multiple engine processes. T04's new session reuses its process; the coordinator migration is T12.
-- Best-move, played-move and principal-variation searches have different budgets. Scores are not normalized before comparison.
+- Legacy best-move, played-move and principal-variation searches have different budgets and unnormalized comparisons. T05's new pipeline uses consistent budgets and learner-oriented scores.
 - Opening identification uses the first ten plies and SAN membership instead of the exact reviewed position; HTTP calls lack timeouts.
 - Phase detection uses piece count, and piece lists accumulate on analyzer reuse.
 - The collector loads all games before sampling and prints UCI, while the analyzer expects SAN.
 - No website, reliable whole-game coach, approved training corpus, trained model or deployment exists yet. Existing six draft labels remain untrusted.
 
-These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership. Candidate comparison, evidence collection, coaching and the website remain later tasks.
+These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership; T05 provides candidate and played-move evidence; T06 provides referenced board observations and changes. External chess context, coaching and the website remain later tasks.

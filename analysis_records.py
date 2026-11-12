@@ -93,6 +93,24 @@ def _engine_score(score):
     return None
 
 
+def comparison_issues(candidates, played):
+    """Shared consistency checks for constructing and importing analysis records."""
+    scores = [_engine_score(candidate.score) for candidate in candidates]
+    played_score = _engine_score(played.score)
+    issues = []
+    if any(a is not None and b is not None and a < b for a, b in zip(scores, scores[1:])):
+        issues.append("Candidate scores disagree with their engine ranking; reanalyze before judging the move.")
+    if scores[0] is not None and played_score is not None and played_score > scores[0]:
+        issues.append("The played-move search scores above the first candidate; the comparison is unstable, not a positive loss.")
+    if candidates[0].move_uci == played.move_uci and candidates[0].score != played.score:
+        issues.append("Separate results disagree on the same move's score; reanalysis is required.")
+    profiles = {(c.search.engine, c.search.config_sha256, c.search.time_limit_seconds,
+                 c.search.depth_limit, c.search.node_limit) for c in (*candidates, played)}
+    if len(profiles) > 1:
+        issues.append("Search profiles differ (including MultiPV width); equal time does not imply equal effort per move.")
+    return tuple(issues)
+
+
 def _board(fen):
     board = chess.Board(fen)
     if len(fen.split()) != 6 or not board.is_valid() or board.has_chess960_castling_rights():
@@ -234,14 +252,7 @@ class AnalysisRecord(VersionedRecord):
             if candidate.score.pov != self.position.learner_color:
                 raise ValueError("Every score must be normalized to the learner")
             _replay(self.position.board(), candidate.pv_uci)
-        scores = [_engine_score(candidate.score) for candidate in self.candidates]
-        played_score = _engine_score(self.played.score)
-        misordered = any(a is not None and b is not None and a < b for a, b in zip(scores, scores[1:]))
-        improved = scores[0] is not None and played_score is not None and played_score > scores[0]
-        same_move_conflict = self.candidates[0].move_uci == self.played.move_uci and self.candidates[0].score != self.played.score
-        profiles = {(c.search.engine, c.search.config_sha256, c.search.time_limit_seconds,
-                     c.search.depth_limit, c.search.node_limit) for c in (*self.candidates, self.played)}
-        if (misordered or improved or same_move_conflict or len(profiles) > 1) and not self.uncertainty:
+        if comparison_issues(self.candidates, self.played) and not self.uncertainty:
             raise ValueError("Conflicting engine results require reanalysis or an explicit uncertainty note")
         return self
 
