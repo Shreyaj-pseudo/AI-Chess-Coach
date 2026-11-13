@@ -83,7 +83,8 @@ def centipawn_loss(best: Score, played: Score) -> int | None:
     return None
 
 
-def _engine_score(score):
+def score_for_ordering(score):
+    """Order normalized scores with native mate semantics, without inventing centipawns."""
     if isinstance(score, CentipawnScore):
         return chess.engine.Cp(score.cp)
     if isinstance(score, MateScore):
@@ -95,8 +96,8 @@ def _engine_score(score):
 
 def comparison_issues(candidates, played):
     """Shared consistency checks for constructing and importing analysis records."""
-    scores = [_engine_score(candidate.score) for candidate in candidates]
-    played_score = _engine_score(played.score)
+    scores = [score_for_ordering(candidate.score) for candidate in candidates]
+    played_score = score_for_ordering(played.score)
     issues = []
     if any(a is not None and b is not None and a < b for a, b in zip(scores, scores[1:])):
         issues.append("Candidate scores disagree with their engine ranking; reanalyze before judging the move.")

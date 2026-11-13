@@ -162,10 +162,56 @@ class CandidateTests(unittest.IsolatedAsyncioTestCase):
                     await analyze_position(engine, position)
                 engine.analyse.assert_not_called()
 
-    async def test_missing_opponent_reply_is_an_actionable_failure(self):
+    async def test_missing_opponent_reply_after_one_retry_is_an_actionable_failure(self):
         for infos, pgn in (([row("e2e4")], "1. e4 *"), (three(), "1. h4 *")):
-            with self.subTest(pgn=pgn), self.assertRaisesRegex(ValueError, "opponent reply"):
-                await analyze_position(session(infos, [row("h2h4")]), context(pgn))
+            move = "e2e4" if "e4" in pgn else "h2h4"
+            engine = session(infos, *([[row(move)]] if move == "e2e4" else [[row(move)], infos, [row(move)]]))
+            with self.subTest(pgn=pgn), self.assertRaisesRegex(ValueError, "after one longer retry"):
+                await analyze_position(engine, context(pgn))
+            self.assertEqual(engine.analyse.await_count, 2 if move == "e2e4" else 4)
+
+    async def test_incomplete_multipv_played_line_recovers_with_one_restricted_retry(self):
+        engine = session([row("e2e4", 30)], [row("e2e4 e7e5 g1f3", 30, depth=17, nodes=700)])
+        record = await analyze_position(engine, context("1. e4 *"), time_limit=.15)
+        self.assertEqual(record.played.pv_uci, ("e2e4", "e7e5", "g1f3"))
+        self.assertEqual(record.played.search.depth, 17)
+        self.assertEqual(record.played.search.nodes, 700)
+        self.assertEqual(record.played.search.time_limit_seconds, .5)
+        self.assertEqual(record.played.search.root_moves, ())
+        self.assertEqual(engine.analyse.await_count, 2)
+        self.assertEqual(engine.analyse.call_args.kwargs, dict(time_limit=.5, multipv=3))
+        self.assertTrue(any("recovered" in note for note in record.uncertainty))
+
+    async def test_incomplete_forced_line_replaces_failed_score_and_warning(self):
+        incomplete = row("h2h4", -500, upperbound=True)
+        recovered = row("h2h4 e7e5", -100, depth=16)
+        engine = session(three(), [incomplete], three(), [recovered])
+        record = await analyze_position(engine, context())
+        self.assertEqual(record.played.score.cp, -100)
+        self.assertEqual(record.played.pv_uci, ("h2h4", "e7e5"))
+        self.assertFalse(any("h4: engine score is a bound" in note for note in record.uncertainty))
+        self.assertEqual(engine.analyse.await_count, 4)
+        self.assertTrue(all(c.search.time_limit_seconds == 4.5 for c in (*record.candidates, record.played)))
+        self.assertTrue(all(call.args[0].fen() == record.position.fen for call in engine.analyse.call_args_list))
+
+    async def test_retry_budget_is_capped_and_larger_results_require_recovery_provenance(self):
+        from candidate_analysis import matches_search_budget
+        engine = session([row("e2e4")], [row("e2e4 e7e5")])
+        record = await analyze_position(engine, context("1. e4 *"), time_limit=5)
+        self.assertEqual([c.kwargs["time_limit"] for c in engine.analyse.call_args_list], [5, 5])
+        self.assertTrue(matches_search_budget(record, 5))
+        ordinary = await analyze_position(session([row("e2e4 e7e5")]), context("1. e4 *"), time_limit=.5)
+        self.assertFalse(matches_search_budget(ordinary, .15))
+
+    async def test_bad_retry_pv_and_engine_errors_are_not_retried_again(self):
+        for retry, kind in (([row("d2d4 d7d5")], ValueError),
+                            ([row("h2h4 e7e6 h4e6")], ValueError),
+                            (EngineSessionError("crashed during retry"), EngineSessionError),
+                            (asyncio.CancelledError(), asyncio.CancelledError)):
+            engine = session(three(), [row("h2h4")], three(), retry)
+            with self.subTest(retry=retry), self.assertRaises(kind):
+                await analyze_position(engine, context())
+            self.assertEqual(engine.analyse.await_count, 4)
 
     async def test_full_history_reaches_both_searches(self):
         position = context("1.Nf3 Nf6 2.Ng1 Ng8 3.h4 *", index=2)

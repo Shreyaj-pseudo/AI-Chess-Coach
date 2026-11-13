@@ -1,8 +1,14 @@
 # Chess AI Coach
 
-A local-first chess coaching project. T01-T08 provide a reproducible Miniconda environment, strict PGN replay, validated records, Stockfish move analysis, referenced board facts, cached opening statistics, and rule-aware endgame tablebase evidence. The existing phase scripts are prototypes: a working web coach and model inference come in later tasks.
+A local-first chess coaching project. T01-T11 provide a reproducible Miniconda environment, strict PGN replay, validated records, Stockfish move analysis, referenced board facts, cached opening statistics, rule-aware endgame tablebase evidence, whole-game moment selection, a replaceable draft-model client, and grounded structured-claim validation. Integrated coaching and the production website come in later tasks.
 
 Roadmap: [audited plan](docs/PLAN.md), [daily agent workflow](docs/DAILY_WORKFLOW.md), [detailed task backlog](docs/tasks.json).
+
+## Browser testing sandbox
+
+Open **http://127.0.0.1:8765/** while the local sandbox server is running. Use sample games or your own PGN to inspect decisions, run Stockfish, replay candidate/played lines, inspect board facts, scan a game, and check opening/tablebase services. The page includes a guided test checklist and expected results. Draft model generation is enabled only when the server has complete model configuration.
+
+If needed, start it from this project folder with `.\.venv\python.exe -m scripts.sandbox`. See [the browser testing guide](docs/SANDBOX.md). This is a real local backend workbench; a public deployment and the integrated coaching website remain later work.
 
 ## Try the PGN ingestion pipeline (T02)
 
@@ -139,7 +145,7 @@ async def main():
 asyncio.run(main())
 ```
 
-The first search requests MultiPV=3. If the played move appears there, its exact candidate evidence is reused. Otherwise, a second search uses MultiPV=1 and `root_moves=(played_move,)` from the **same pre-move board with history**, leaving the opponent free to choose its engine-best reply. Both searches use the same time budget. Full PVs are retained, never trimmed to a display length. Missing/malformed/illegal lines, wrong restricted roots, duplicate candidates, missing depth/nodes/time, and continuations after terminal positions fail validation. A nonterminal played move must have an opponent reply; otherwise the caller gets an actionable failure to rerun with a longer budget. Mating moves and moves ending an automatic draw may legitimately have a one-ply PV. Stockfish may include additional moves after an automatic draw; this API rejects those lines rather than truncating their evidence, so some draw-transition positions currently fail analysis.
+The first search requests MultiPV=3. If the played move appears there, its exact candidate evidence is reused. Otherwise, a second search uses MultiPV=1 and `root_moves=(played_move,)` from the **same pre-move board with history**, leaving the opponent free to choose its engine-best reply. Both searches use the same time budget. Full PVs are retained, never trimmed to a display length. Missing/malformed/illegal lines, wrong restricted roots, duplicate candidates, missing depth/nodes/time, and continuations after terminal positions fail validation. A nonterminal played move must have an opponent reply. If its PV is incomplete, the shared analyzer retries the complete position once at three times the requested budget (minimum 0.5s, maximum 5s per search). Candidates and the played line are replaced together with the retry?s own scores/PVs/provenance; a recovery note records the initial and retry budgets. A second incomplete result fails explicitly. Illegal/missing PVs, engine errors and cancellation do not trigger this recovery. Mating moves and moves ending an automatic draw may legitimately have a one-ply PV. Stockfish may include additional moves after an automatic draw; this API rejects those lines rather than truncating their evidence, so some draw-transition positions currently fail analysis.
 
 `elapsed_seconds` is Stockfish's reported search time, not request wall time or queue/startup latency. Nodes are the engine's reported search counters and must not be summed across MultiPV entries. The profile hash is SHA-256 of compact sorted JSON of `{"options":{"Threads":1,"Hash":128,"MultiPV":N},"limit":{"time":seconds}}`; root restrictions are stored separately. MultiPV=3 and a restricted MultiPV=1 allocate effort differently and receive different hashes plus an explicit qualification.
 
@@ -305,6 +311,84 @@ This performs two short UCI searches in one process and confirms its shutdown. I
 
 Stockfish is GPLv3; preserve the corresponding source/license information if distributing its binary. [Official license guidance](https://stockfishchess.org/about/)
 
+## Select whole-game review moments (T09)
+
+```powershell
+python -m scripts.review_game tests/fixtures/pgn/played_blunder.pgn --color white
+python -m scripts.review_game tests/fixtures/pgn/castling.pgn --color black > review.json
+```
+
+This prints a validated `GameReview` JSON record, using one persistent Stockfish session and no hosted API. It scans every learner decision at 0.15 seconds per search, shortlists at most 30 positions, and reanalyzes those at 1.5 seconds per search. Candidate and separate played-move searches may each consume that budget: a maximum-size game can need roughly 120 seconds of engine search plus overhead without recovery, or up to roughly 490 seconds plus overhead in the exceptional case where every scan and deep position needs a complete-position retry. Actual retry budgets are stored in each search record; review scan/deep settings remain the initial budgets. Optional `--scan-time` / `--deep-time` must satisfy `0 < scan < deep <= 5` seconds.
+
+`scanned` contains preliminary evidence and selection reasons; `deep_checks` contains confirmation evidence; `moments` references at most 15 confirmed positions in priority order, with the top three first. Python callers can use `review_game(session, pgn, color)` and the result's `selected_analyses` / `top_three` properties. Reports may contain zero or fewer than fifteen moments: they never pad to a target count. `failures` and `partial` explicitly identify rejected position evidence; engine crashes/timeouts abort the review instead of fabricating scores.
+
+Selection prioritizes mate-status changes, observed losses of at least 100 centipawns, short mating continuations, and best moves with substantially weaker supplied alternatives. Check/capture/evasion contexts distinguish forcing choices from quiet strong decisions. Castling in the first twenty full moves is the initial opening heuristic; it does not identify book moves or claim an opening advantage. A shared played continuation can deduplicate nearby moments, while independent neighboring errors remain eligible. These are review-selection heuristics, not mistake grades or proof that a move is uniquely best. Scan reasons are provisional: a plausible score gap can trigger deep investigation even when the scan has bounds, inconsistent rankings or low depth. Those warnings still block final comparative reasons if they persist in the deep evidence. Missing scores cannot establish a comparison; observable mating lines and castling remain eligible independently.
+
+The selection policy is `t09-v2`. Regenerate older `t09-v1` reports before loading them with the current validator: their scan reasons and shortlist were calculated under the previous, stricter screening policy. Existing files are not rewritten automatically.
+
+Only deeper evidence determines the final ranking and reasons. Finite-search uncertainty and the actual played variation remain attached. A move that stops qualifying after deeper search is dropped. Shallow screening can still miss useful lessons; this is not an exhaustive tactical or positional classifier. The coordinator will combine opening/tablebase/board evidence and generate coaching cards in T12. Pass only each selected analysis to that future generator: the full report includes later game context and must not become a per-position prompt.
+
+## Generate one model draft (T10)
+
+`ModelClient.generate_card(analysis_record)` supports OpenRouter and Ollama with the same validated `GenerationResult`: a draft `CoachingCard`, requested and returned model/provider, request ID when available, elapsed time, and hosted catalog-pricing provenance. It accepts one `AnalysisRecord`, not a raw PGN or complete review. Only that position's prior history, supplied candidate/played variations and uncertainty reach the model. Game headers/comments are absent; move sequences are not anonymous.
+
+Add the following settings to your existing `.env`, or set equivalent shell variables (shell values win). Never overwrite an existing `.env` with the example file. Select an actual currently available model/provider from OpenRouter; these placeholders deliberately do not choose one:
+
+```dotenv
+COACH_MODEL_BACKEND=openrouter
+OPENROUTER_API_KEY=your-key-here
+OPENROUTER_MODEL=author/exact-model:free
+OPENROUTER_PROVIDER=exact-provider-slug
+```
+
+Before every hosted generation, the client fetches the model catalog and requires exactly one matching explicit `:free` model with known zero prompt/completion prices and zero values for every additional listed price. Missing, paid or unknown prices stop generation. Each request pins one provider, disables fallback, requires parameter support, and caps prompt/completion/request prices at zero. It rejects automatic routers, redirects and unexpected returned models, and records the serving provider's returned display name separately from the requested slug. If the free route is unavailable or lacks JSON support, it fails instead of switching. See [OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection) and [chat API](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion).
+
+For Ollama, install/run Ollama and separately pull a suitable local model first, then configure its explicit tag:
+
+```dotenv
+COACH_MODEL_BACKEND=ollama
+OLLAMA_MODEL=your-installed-model:tag
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+The Ollama adapter calls the loopback `/api/chat` endpoint with a JSON schema and streaming disabled; it does not install/pull models or fall back to hosted generation. Only loopback HTTP base URLs are accepted, hosted credentials/provider settings are not passed, and `:cloud` model identifiers are rejected. Select an actual local model rather than a custom configuration that delegates remotely. See [Ollama chat API](https://docs.ollama.com/api/chat).
+
+From the activated Miniconda environment, first produce one analysis record, then request a draft:
+
+```powershell
+python -m scripts.analyze_position tests/fixtures/pgn/played_blunder.pgn --color white --ply 3 > position.json
+python -m scripts.generate_card position.json
+```
+
+The draft CLI accepts UTF-8 (with or without a BOM) and BOM-marked UTF-16, including Windows PowerShell 5 redirection. Do not use `--facts` here: T10 expects the analysis record itself, not a wrapper. The draft CLI performs a real model request only when explicitly invoked with valid configuration. No key, model request or model download is needed for offline tests. Keys are excluded from configuration/result serialization and safe error messages. Errors distinguish configuration, pricing policy, unavailable/timeout, rate limit and invalid response; there is one attempt, no automatic retry/repair. A numeric retry hint is exposed on `ModelRateLimitError` when supplied.
+
+Transport limits are 64 KiB of input evidence, 1 MiB of response JSON, 8 MiB of catalog data, and default 1,500 output tokens. HTTP connect/read timeouts are 5/60 seconds; these are not a whole-game latency guarantee. Explicit Python `ModelConfig` settings allow a read timeout up to 120 seconds and output cap up to 4,096 tokens. No provider-specific tokenizer or context-fit guarantee is implemented yet. Ambient proxy/netrc settings are disabled for these calls.
+
+The low-level `ModelClient.generate_card` remains a transport-only compatibility path. User-facing draft generation in the CLI and sandbox now uses the T11 path below. Free pricing does not establish output-reuse/training rights: T21 records those separately. Live hosted/local generation has not been demonstrated by the offline fixtures.
+
+## Grounded structured coaching drafts (T11)
+
+`grounded_cards.generate_grounded_card(client, analysis_record)` is the user-facing draft entry point. The existing draft CLI and sandbox button use it. The result contains a rendered `card`, its structured `draft`, up to two attempt/provenance records, prompt version, and preserved engine uncertainty. Reloaded results must call `GroundedGeneration.model_validate_json(...).validate_for(analysis)` to recompute claims and verify the rendered card; content IDs alone do not establish chess truth.
+
+The prompt supplies the pre-move game prefix with identifying headers/comments removed, learner-oriented candidate/played scores, and explicit line prefixes with a compact set of board facts at exact line plies. The complete engine PV stays in the original analysis. Supplied prefixes start at eight plies, narrowing to four or two when necessary; `truncated`, `full_pv_plies` and attempt `visible_line_plies` make the scope explicit. Claims about a payoff outside the supplied prefix are rejected rather than inferred. Not every supported T06 fact is included in a compact packet; a model cannot cite omitted facts.
+
+Models return five sections (summary, played-move explanation, recommendation explanation, candidate comparison, lesson). Each contains structured observations plus strategic interpretation. Fact observations cite `(candidate_id, ply, kind, subject, value)` and are recomputed using T06. Move observations must match the exact supplied SAN at that line ply. Score observations must match the supplied score and learner perspective, retaining mate as mate. The played move and recommendation both need supporting continuations, and comparison must include another line when available. A false piece, check, material, move or score observation suppresses the draft even if the supporting move sequence itself is legal.
+
+Concrete factual sentences are rendered deterministically from those checked observations. Model interpretation uses a deliberately narrow prose contract: no move notation/numbers, specific check/mate/material-win claims, uniqueness claims or invented player intent. Recognized violations are rejected. Every accepted interpretation is labeled **possible strategic interpretation, requiring human review**. These rules are not a general natural-language fact prover: unusual paraphrases, strategic quality, relevance and teaching value remain human-review concerns. Fixed rendering also does not establish that a finite-search PV is forced or uniquely best.
+
+An invalid JSON/schema/claim draft gets one regeneration with a safe validation-error code and the original evidence. Rejected raw text is not echoed into the repair prompt. Two invalid drafts produce an explicit error and no card. Transport, rate-limit, pricing and context failures stop immediately. Each hosted repair rechecks current free pricing and retains separate requested/returned model/provider metadata; no paid fallback is introduced.
+
+Context/output configuration, from `.env` or shell:
+
+```dotenv
+COACH_CONTEXT_TOKENS=16384
+COACH_MAX_OUTPUT_TOKENS=1500
+```
+
+Preflight uses a conservative **UTF-8 byte-based token upper-bound estimate plus chat/schema overhead**, reserves output and repair space, and rejects oversized evidence before generation. The method is recorded; it is **not an exact model-tokenizer count**. Exact tokenizer adapters remain a later optimization once specific models are pinned; unusual/custom tokenizers or templates still require calibration. OpenRouter's reported context limit must be present and sufficient. Structured Ollama calls inspect `/api/show` context metadata and explicitly set `num_ctx` within reported/configured limits. Unknown or insufficient context fails closed. Raising the configured context requires actual model/runtime support and can increase memory use. Neither a provider request nor a tokenizer download is needed for offline checks.
+
+T11 tests validate policy using synthetic drafts, including legal-line/false-fact pairs, prompt-injection comments, invented intent, wrong-side scores, unknown/unseen references, repair limits and context refusal. They do not measure live model teaching quality. T12 integrates one card with the complete analysis/source pipeline and a ten-position suite; manual coaching review starts there.
+
 ## Tests and task execution
 
 ```powershell
@@ -316,6 +400,9 @@ python -m unittest discover -s tests -p test_T05_candidates.py -v
 python -m unittest discover -s tests -p test_T06_facts.py -v
 python -m unittest discover -s tests -p test_T07_openings.py -v
 python -m unittest discover -s tests -p test_T08_tablebases.py -v
+python -m unittest discover -s tests -p test_T09_selection.py -v
+python -m unittest discover -s tests -p test_T10_models.py -v
+python -m unittest discover -s tests -p test_T11_cards.py -v
 python -m unittest discover -s tests -v
 python scripts/workflow.py status --track mvp
 python scripts/workflow.py prompt --track mvp
@@ -327,7 +414,7 @@ Task evidence and logs are in gitignored `artifacts/tasks/` and `.workflow/`. Ke
 
 ## Known prototype limitations
 
-- Phase functions print prompts and return no generated coaching explanation; no model is called.
+- Legacy phase functions print prompts and return no generated coaching explanation. T10's separate draft client can call a model; integration is T12.
 - The legacy coordinator repeats analysis, and each legacy load starts multiple engine processes. T04's new session reuses its process; the coordinator migration is T12.
 - Legacy best-move, played-move and principal-variation searches have different budgets and unnormalized comparisons. T05's new pipeline uses consistent budgets and learner-oriented scores.
 - Legacy opening identification uses the first ten plies and SAN membership; its old HTTP path lacks timeouts. T07's new API/CLI uses exact positions, bounded requests, caching and explicit statuses; phase/coordinator migration remains T12.
@@ -335,4 +422,4 @@ Task evidence and logs are in gitignored `artifacts/tasks/` and `.workflow/`. Ke
 - The collector loads all games before sampling and prints UCI, while the analyzer expects SAN.
 - No website, reliable whole-game coach, approved training corpus, trained model or deployment exists yet. Existing six draft labels remain untrusted.
 
-These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership; T05 provides candidate and played-move evidence; T06 provides referenced board observations and changes; T07 provides opening statistics with honest provenance/fallbacks; T08 provides endgame tablebase evidence with draw-rule context. Whole-game selection, coaching and the website remain later tasks.
+These are recorded baseline issues. T01 provides setup; T02 provides strict PGN parsing and replay; T03 provides the shared records and score normalization; T04 provides persistent engine ownership; T05 provides candidate and played-move evidence; T06 provides referenced board observations and changes; T07 provides opening statistics with honest provenance/fallbacks; T08 provides endgame tablebase evidence with draw-rule context; T09 provides bounded whole-game selection; T10 provides the draft-model adapter. Grounded integrated coaching and the website remain later tasks.

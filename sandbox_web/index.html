@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="A local chess-analysis workbench for testing real PGN replay, Stockfish evidence and review selection."><title>Chess workshop · Testing sandbox</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
+<body>
+<header><div><h1>Chess workshop<span>Testing sandbox</span></h1><p>Your game. The engine’s evidence. A closer look.</p></div><div class="health"><span id="connection">Connecting to local backend…</span><button id="engine-test" data-run>Check engine</button></div></header>
+<main>
+<aside class="source">
+  <h2>Choose a game</h2><p class="muted">Start with a known position, then try your own.</p>
+  <label for="sample">Sample game</label><select id="sample" class="source-control"><option value="mate">Fool’s Mate · a clear tactical error</option><option value="castling">Ruy Lopez · opening and castling</option><option value="endgame">Queen endgame · mate in one</option><option value="custom">Your own PGN</option></select>
+  <label for="pgn">Game PGN</label><textarea id="pgn" class="source-control" rows="7" spellcheck="false" placeholder="Paste one standard-chess game here…"></textarea>
+  <label class="file-label" for="file">Or open a .pgn file <input type="file" id="file" class="source-control" accept=".pgn,.txt"></label>
+  <label for="color">Review as</label><select id="color" class="source-control"><option value="white">White</option><option value="black">Black</option></select>
+  <button id="inspect" data-run class="wide">Read game</button>
+  <label for="decision">Learner decision <span class="muted">(before the move)</span></label><select id="decision" class="source-control" disabled><option>Read a game first</option></select>
+  <button id="analyze" data-run class="primary wide" disabled>Analyze this position</button><button id="review" data-run class="wide" disabled>Find moments in the whole game</button>
+  <p class="hint">A full-game scan can take a couple of minutes. Keep this tab open; one operation runs at a time.</p>
+  <details id="guide" open><summary>What should I test?</summary>
+    <ol class="test-list">
+      <li><strong>Known tactic.</strong> Choose Fool’s Mate, White, ply 3. Analyze. Played move should be <b>g4</b>, with a losing mate-in-one score.</li>
+      <li><strong>Replay the consequence.</strong> Keep “Played” selected. Press Next twice: <b>g4 → Qh4#</b>. After g4, legal checks include Qh4#; the final board says checkmate.</li>
+      <li><strong>Compare alternatives.</strong> Select a candidate. Its own continuation should replace the board replay. Small score gaps do not prove a unique best move.</li>
+      <li><strong>Scan the game.</strong> Find moments. Expect two White decisions scanned and g4 selected. f3 may be deep-checked, but uncertain deep evidence can leave only one final moment.</li>
+      <li><strong>Change sides.</strong> Switch to Black, read the game, analyze ply 4. Played move Qh4# should have a winning mate score from Black’s perspective.</li>
+      <li><strong>Check other sources.</strong> Use Ruy Lopez for opening context. Use the queen endgame for tablebase evidence. Network failures must be shown honestly.</li>
+      <li><strong>Reject bad input.</strong> Paste <code>1. e5 *</code> and read the game. Expect an illegal-move error, with no invented result.</li>
+    </ol>
+  </details>
+</aside>
+<section class="workspace" aria-label="Analysis workbench">
+  <div id="status" role="status" aria-live="polite">Loading the sample game…</div>
+  <div class="board-heading"><h2 id="position-title">Position</h2><button id="flip">Flip board</button></div>
+  <div class="board-layout">
+    <div class="board-column"><div id="board-wrap" tabindex="0" aria-label="Board replay. Use left and right arrow keys to step."><img id="board" alt="Chess position will appear after reading a game"></div>
+      <div class="replay"><button id="previous" disabled>Previous</button><span id="step">Before move</span><button id="next" disabled>Next</button></div>
+      <p id="board-description" class="board-caption">Read a game to inspect its board.</p><details class="fen"><summary>Position FEN</summary><code id="fen"></code></details>
+    </div>
+    <div class="evidence">
+      <div class="evaluation"><span id="score-label">Engine evaluation</span><strong id="score">Not analyzed</strong><p id="search-meta">Run a position analysis to see actual engine evidence.</p></div>
+      <h3>Replay a line</h3><div id="line-buttons" class="line-buttons"><p class="muted">Candidate and played lines will appear here.</p></div><p id="continuation" class="continuation"></p>
+      <h3>Facts on this board</h3><dl id="facts"></dl><p class="hint">Attack counts do not establish a hanging piece or a winning tactic. Tactical conclusions remain unknown unless separately supported.</p>
+    </div>
+  </div>
+  <section id="warnings-section" hidden><h3>Search qualifications</h3><ul id="warnings"></ul></section>
+  <section id="moments-section" hidden><div class="section-heading"><h2>Moments to investigate</h2><span id="review-summary"></span></div><p class="muted">Selected from deeper evidence. These are priorities for review, not mistake grades.</p><div id="moments"></div><p id="review-failures"></p></section>
+  <section class="sources"><h2>Check another source</h2><p class="muted">These buttons make real network requests for the chosen decision. Opening statistics are not move-quality verdicts.</p><div class="button-row"><button id="opening" data-run disabled>Opening context</button><button id="tablebase" data-run disabled>Endgame tablebase</button><button id="draft" data-run disabled>Generate model draft</button></div><p id="model-status" class="hint">Model configuration is checked locally; keys never enter this page.</p><div id="source-result" aria-live="polite"></div></section>
+  <details class="raw"><summary>Inspect or download the result JSON</summary><button id="download" disabled>Download JSON</button><pre id="raw">Run an operation to inspect its exact output.</pre></details>
+</section>
+</main>
+<footer>Live local backend · T01–T10 workbench · Explanations are unapproved drafts; grounded coaching and the production website are still in development. Games and results stay in memory here; opening lookups use the existing local cache.</footer>
+</body></html>

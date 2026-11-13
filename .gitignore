@@ -54,3 +54,4 @@ stockfish-windows-x86-64-avx2.zip
 # Local workflow state, generated evidence and private dataset/model artifacts
 .workflow/
 artifacts/
+.playwright-mcp/
